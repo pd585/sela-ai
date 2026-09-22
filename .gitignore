@@ -38,3 +38,14 @@ dist-ssr
 
 # Test artifacts
 *-sela-expert-memo.pdf
+*.pdf
+
+# Coverage and temporary files
+coverage/
+*.tmp
+*.temp
+*.bak
+*.swp
+
+# OS files
+Thumbs.db

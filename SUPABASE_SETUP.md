@@ -49,8 +49,8 @@ To enable Google Sign-In with PKCE:
 2. Enable the Google provider.
 3. Paste the **Client ID** and **Client Secret** obtained from Google Cloud Console.
 4. Under **Authentication** > **URL Configuration**, set:
-   - **Site URL**: `http://localhost:3000` (or your production URL).
-   - **Redirect URLs**: Add `http://localhost:3000/auth/callback` (and your production URL `/auth/callback`).
+   - **Site URL**: `https://sela-ai-zeta.vercel.app` for the deployed app.
+   - **Redirect URLs**: Add both `http://localhost:8080/auth/callback` for local development and `https://sela-ai-zeta.vercel.app/auth/callback` for production.
 
 ---
 

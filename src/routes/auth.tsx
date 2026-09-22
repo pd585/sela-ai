@@ -26,6 +26,14 @@ export const Route = createFileRoute("/auth")({
   component: AuthPage,
 });
 
+function getBrowserRedirectUrl(pathname: string) {
+  const origin = window.location.origin;
+  if (!origin || origin === "null") {
+    throw new Error("Unable to determine the application origin.");
+  }
+  return new URL(pathname, origin).toString();
+}
+
 function AuthPage() {
   const navigate = useNavigate();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
@@ -47,7 +55,7 @@ function AuthPage() {
         const { error } = await supabase.auth.signUp({
           email,
           password,
-          options: { emailRedirectTo: `${window.location.origin}/app/home` },
+          options: { emailRedirectTo: getBrowserRedirectUrl("/app/home") },
         });
         if (error) throw error;
         toast.success("Check your email to confirm your account, then sign in.");
@@ -70,7 +78,7 @@ function AuthPage() {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
+          redirectTo: getBrowserRedirectUrl("/auth/callback"),
         },
       });
       if (error) throw error;
