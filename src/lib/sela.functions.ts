@@ -234,7 +234,9 @@ async function getOwnedDocument(
 ) {
   const { data, error } = await supabaseClient
     .from("documents")
-    .select("id, title, status, user_id, overview, key_terms, clauses, issues, file_name, page_count, status_detail, error_message")
+    .select(
+      "id, title, status, user_id, overview, key_terms, clauses, issues, file_name, page_count, status_detail, error_message",
+    )
     .eq("id", documentId)
     .eq("user_id", userId)
     .single();

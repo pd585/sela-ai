@@ -12,11 +12,11 @@ describe("SELA product terminology audit", () => {
       "components/sela/shell.tsx",
     ];
 
-    const combined = files
-      .map((file) => readFileSync(join(srcRoot, file), "utf-8"))
-      .join("\n");
+    const combined = files.map((file) => readFileSync(join(srcRoot, file), "utf-8")).join("\n");
 
     expect(combined).not.toMatch(/plain[- ]language|Plain[- ]Language|Plain[- ]language/i);
-    expect(combined).not.toMatch(/Plain-Language Version|Plain-Language Review|Simplified Version|Simplified Document|Review Version|Rewritten Document/i);
+    expect(combined).not.toMatch(
+      /Plain-Language Version|Plain-Language Review|Simplified Version|Simplified Document|Review Version|Rewritten Document/i,
+    );
   });
 });

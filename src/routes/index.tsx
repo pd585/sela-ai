@@ -24,7 +24,10 @@ export const Route = createFileRoute("/")({
 });
 
 const promises = [
-  { ask: "Tell me what this document is.", gives: "A clear overview grounded in the document itself." },
+  {
+    ask: "Tell me what this document is.",
+    gives: "A clear overview grounded in the document itself.",
+  },
   {
     ask: "What actually matters here?",
     gives: "The terms, clauses and obligations that carry weight.",
