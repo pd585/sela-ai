@@ -1,5 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/integrations/supabase/types";
 import { z } from "zod";
 
 const ProcessInput = z.object({ documentId: z.string().uuid() });
@@ -210,8 +212,23 @@ Rules:
 4. "clauses": Major clauses with what it says and why inspect.
 5. "issues": Descriptive observations of one-sided terms, ambiguities, or missing standards. Never risk scores.`;
 
+type OwnedDocument = {
+  id: string;
+  title: string;
+  status: string;
+  user_id?: string;
+  overview?: unknown;
+  key_terms?: unknown;
+  clauses?: unknown;
+  issues?: unknown;
+  file_name?: string;
+  page_count?: number | null;
+  status_detail?: string | null;
+  error_message?: string | null;
+};
+
 async function getOwnedDocument(
-  supabaseClient: { from: (table: string) => { select: (columns: string) => { eq: (column: string, value: string) => { eq: (column: string, value: string) => { single: () => Promise<{ data: { id: string; title: string; status: string; user_id?: string; overview?: unknown; key_terms?: unknown; clauses?: unknown; issues?: unknown; file_name?: string; page_count?: number | null; status_detail?: string | null; error_message?: string | null } | null; error: { message: string } | null> } } } } } },
+  supabaseClient: SupabaseClient<Database>,
   documentId: string,
   userId: string,
 ) {
