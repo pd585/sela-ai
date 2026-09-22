@@ -54,6 +54,8 @@ CREATE POLICY "Users read own chunks" ON public.document_chunks
   FOR SELECT TO authenticated USING (auth.uid() = user_id);
 CREATE POLICY "Users insert own chunks" ON public.document_chunks
   FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users update own chunks" ON public.document_chunks
+  FOR UPDATE TO authenticated USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Users delete own chunks" ON public.document_chunks
   FOR DELETE TO authenticated USING (auth.uid() = user_id);
 
@@ -78,6 +80,8 @@ CREATE POLICY "Users read own questions" ON public.document_questions
   FOR SELECT TO authenticated USING (auth.uid() = user_id);
 CREATE POLICY "Users insert own questions" ON public.document_questions
   FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users update own questions" ON public.document_questions
+  FOR UPDATE TO authenticated USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Users delete own questions" ON public.document_questions
   FOR DELETE TO authenticated USING (auth.uid() = user_id);
 

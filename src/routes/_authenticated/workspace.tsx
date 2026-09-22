@@ -1,15 +1,29 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { processDocument } from "@/lib/sela.functions";
 import { extractDocument, chunkPages } from "@/lib/extract-text";
 import { AppShell } from "@/components/sela/shell";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { FileText, Loader2, Trash2, Upload } from "lucide-react";
+import { FileText, Loader2, Search, Trash2, Upload } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/workspace")({
+  beforeLoad: () => {
+    throw redirect({ to: "/app/documents" });
+  },
   head: () => ({
     meta: [
       { title: "Your documents · SELA" },
@@ -40,11 +54,25 @@ type DocumentRow = {
   created_at: string;
 };
 
-function Workspace() {
+function displayTitle(title: string, fileName: string) {
+  const looksLikeId = /^[a-f0-9]{24,}$/i.test(title);
+  const source = looksLikeId ? fileName.replace(/\.(pdf|docx)$/i, "") : title;
+  return source
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+export function Workspace() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploadState, setUploadState] = useState<string | null>(null);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [docToDelete, setDocToDelete] = useState<DocumentRow | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const { data: documents = [], isLoading } = useQuery({
     queryKey: ["documents"],
@@ -61,6 +89,14 @@ function Workspace() {
     refetchInterval: (query) =>
       (query.state.data ?? []).some((doc) => doc.status === "preparing") ? 3000 : false,
   });
+
+  const filteredDocuments = useMemo(() => {
+    if (!searchQuery.trim()) return documents;
+    const q = searchQuery.toLowerCase();
+    return documents.filter(
+      (doc) => doc.title.toLowerCase().includes(q) || doc.file_name.toLowerCase().includes(q),
+    );
+  }, [documents, searchQuery]);
 
   const handleFile = async (file: File) => {
     const { data: session } = await supabase.auth.getUser();
@@ -132,20 +168,32 @@ function Workspace() {
     }
   };
 
-  const remove = async (id: string) => {
-    const { error } = await supabase.from("documents").delete().eq("id", id);
-    if (error) toast.error("That document could not be removed.");
-    else queryClient.invalidateQueries({ queryKey: ["documents"] });
+  const confirmRemove = async () => {
+    if (!docToDelete) return;
+    setIsDeleting(true);
+    try {
+      const { error } = await supabase.from("documents").delete().eq("id", docToDelete.id);
+      if (error) {
+        toast.error("That document could not be removed.");
+      } else {
+        toast.success("Document removed.");
+        queryClient.invalidateQueries({ queryKey: ["documents"] });
+      }
+    } finally {
+      setIsDeleting(false);
+      setDocToDelete(null);
+    }
   };
 
   return (
     <AppShell>
       <div className="mx-auto max-w-5xl px-6 py-12">
-        <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="flex flex-wrap items-end justify-between gap-6">
           <div>
-            <h1 className="font-display text-4xl">Your documents</h1>
+            <p className="text-xs uppercase tracking-[0.22em] text-brass">My desk</p>
+            <h1 className="mt-2 font-display text-4xl">Your documents</h1>
             <p className="mt-2 text-sm text-muted-foreground">
-              PDF or Word. Each document stays private to your account.
+              PDF or Word. Private to your account, ready for a grounded review.
             </p>
           </div>
           <Button onClick={() => inputRef.current?.click()} disabled={Boolean(uploadState)}>
@@ -172,7 +220,20 @@ function Workspace() {
           />
         </div>
 
-        <div className="mt-10 space-y-3">
+        {documents.length > 0 && (
+          <div className="relative mt-8 max-w-sm">
+            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="search"
+              placeholder="Search documents…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+        )}
+
+        <div className="mt-6 space-y-3">
           {isLoading && <p className="text-sm text-muted-foreground">Loading your documents…</p>}
 
           {!isLoading && documents.length === 0 && (
@@ -186,23 +247,30 @@ function Workspace() {
             </div>
           )}
 
-          {documents.map((doc) => {
+          {!isLoading && documents.length > 0 && filteredDocuments.length === 0 && (
+            <p className="paper-panel p-6 text-sm text-muted-foreground">
+              No documents match &ldquo;{searchQuery}&rdquo;.
+            </p>
+          )}
+
+          {filteredDocuments.map((doc) => {
             const preparing = doc.status === "preparing";
             const failed = doc.status === "failed";
+            const title = displayTitle(doc.title, doc.file_name);
             return (
               <div
                 key={doc.id}
                 className="paper-panel flex flex-wrap items-center justify-between gap-4 p-5"
               >
                 <div className="min-w-0">
-                  <p className="truncate font-display text-xl">{doc.title}</p>
+                  <p className="truncate font-display text-xl">{title}</p>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {doc.file_name}
                     {doc.page_count ? ` · ${doc.page_count} pages` : ""} ·{" "}
                     {failed
-                      ? (doc.error_message ?? "Could not be prepared")
+                      ? `Unable to process · ${doc.error_message ?? "Please try again"}`
                       : preparing
-                        ? (doc.status_detail ?? "Preparing your document")
+                        ? "Processing"
                         : "Ready for review"}
                   </p>
                 </div>
@@ -214,7 +282,7 @@ function Workspace() {
                       size="sm"
                       onClick={() =>
                         navigate({
-                          to: "/documents/$documentId",
+                          to: "/app/documents/$documentId/review",
                           params: { documentId: doc.id },
                         })
                       }
@@ -226,7 +294,7 @@ function Workspace() {
                     variant="ghost"
                     size="sm"
                     aria-label="Remove document"
-                    onClick={() => void remove(doc.id)}
+                    onClick={() => setDocToDelete(doc)}
                   >
                     <Trash2 className="size-4" />
                   </Button>
@@ -235,6 +303,35 @@ function Workspace() {
             );
           })}
         </div>
+
+        <AlertDialog
+          open={Boolean(docToDelete)}
+          onOpenChange={(open) => !open && setDocToDelete(null)}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Remove this document?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete &ldquo;{docToDelete?.title}&rdquo; along with its
+                extracted passages, vector embeddings, and question history. This action cannot be
+                undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(e) => {
+                  e.preventDefault();
+                  void confirmRemove();
+                }}
+                disabled={isDeleting}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {isDeleting ? "Removing…" : "Remove Document"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         <p className="mt-10 text-sm text-muted-foreground">
           Need the landing page?{" "}

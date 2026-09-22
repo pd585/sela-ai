@@ -77,7 +77,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       {
         name: "description",
         content:
-          "SELA reads a contract or legal document and explains it in plain language, with every answer traceable to the exact passage.",
+          "SELA reads a contract or legal document and explains it clearly, with every answer traceable to the exact passage.",
       },
       { property: "og:title", content: "SELA — Understand your legal documents" },
       {

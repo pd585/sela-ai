@@ -8,7 +8,7 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "SELA turns a contract or legal document into an understandable working session: a plain-language overview, the clauses worth inspecting, and answers you can trace back to the exact passage.",
+          "SELA turns a contract or legal document into a structured review session: a source-grounded overview, the clauses worth inspecting, and answers you can trace back to the exact passage.",
       },
       { property: "og:title", content: "SELA — Understand what your legal document actually says" },
       {
@@ -24,7 +24,7 @@ export const Route = createFileRoute("/")({
 });
 
 const promises = [
-  { ask: "Tell me what this document is.", gives: "A clear overview in plain language." },
+  { ask: "Tell me what this document is.", gives: "A clear overview grounded in the document itself." },
   {
     ask: "What actually matters here?",
     gives: "The terms, clauses and obligations that carry weight.",

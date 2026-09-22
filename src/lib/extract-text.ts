@@ -28,20 +28,26 @@ async function extractPdf(file: File): Promise<ExtractedDocument> {
   pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
 
   const buffer = await file.arrayBuffer();
-  const doc = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
-  const pages: ExtractedPage[] = [];
+  const loadingTask = pdfjs.getDocument({ data: new Uint8Array(buffer) });
 
-  for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber++) {
-    const page = await doc.getPage(pageNumber);
-    const content = await page.getTextContent();
-    const text = content.items
-      .map((item) => ("str" in item ? item.str : ""))
-      .join(" ")
-      .replace(/\s+/g, " ");
-    pages.push({ page: pageNumber, text: clean(text) });
+  try {
+    const pdf = await loadingTask.promise;
+    const pages: ExtractedPage[] = [];
+
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+      const page = await pdf.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const text = content.items
+        .map((item) => ("str" in item ? item.str : ""))
+        .join(" ")
+        .replace(/\s+/g, " ");
+      pages.push({ page: pageNumber, text: clean(text) });
+    }
+
+    return { pages, pageCount: pdf.numPages };
+  } finally {
+    await loadingTask.destroy();
   }
-  await doc.destroy();
-  return { pages, pageCount: doc.numPages };
 }
 
 async function extractDocx(file: File): Promise<ExtractedDocument> {

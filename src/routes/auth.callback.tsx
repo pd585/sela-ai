@@ -26,7 +26,7 @@ function AuthCallbackPage() {
             throw new Error("No authorization code or active session found.");
           }
         }
-        navigate({ to: "/workspace", replace: true });
+        navigate({ to: "/app/home", replace: true });
       } catch (err) {
         console.error("Auth callback error:", err);
         setErrorMsg(err instanceof Error ? err.message : "Authentication failed.");

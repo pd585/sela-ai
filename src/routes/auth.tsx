@@ -35,7 +35,7 @@ function AuthPage() {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
-      if (data.session) navigate({ to: "/workspace" });
+      if (data.session) navigate({ to: "/app/home" });
     });
   }, [navigate]);
 
@@ -47,7 +47,7 @@ function AuthPage() {
         const { error } = await supabase.auth.signUp({
           email,
           password,
-          options: { emailRedirectTo: `${window.location.origin}/workspace` },
+          options: { emailRedirectTo: `${window.location.origin}/app/home` },
         });
         if (error) throw error;
         toast.success("Check your email to confirm your account, then sign in.");
@@ -55,7 +55,7 @@ function AuthPage() {
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        navigate({ to: "/workspace" });
+        navigate({ to: "/app/home" });
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "That didn't work. Please try again.");

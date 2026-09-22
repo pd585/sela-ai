@@ -6,6 +6,21 @@ const ProcessInput = z.object({ documentId: z.string().uuid() });
 const AskInput = z.object({
   documentId: z.string().uuid(),
   question: z.string().min(3).max(1000),
+  verifyExternal: z.boolean().optional().default(false),
+  searchMode: z.enum(["document", "both", "external"]).optional().default("document"),
+});
+
+const ExplainInput = z.object({
+  documentId: z.string().uuid(),
+  chunkIndex: z.number().int().optional(),
+  text: z.string().optional(),
+  language: z.enum(["en", "te", "hi", "ml", "kn"]).optional().default("en"),
+});
+
+const TranslateInput = z.object({
+  documentId: z.string().uuid(),
+  targetLanguage: z.enum(["en", "te", "hi", "ml", "kn"]),
+  sections: z.array(z.any()).optional(),
 });
 
 export type Citation = { chunkIndex: number; page: number; excerpt: string };
@@ -18,20 +33,56 @@ export type DocumentOverview = {
   dates: Array<{ label: string; detail: string; chunk_index: number }>;
   what_matters_first: string[];
 };
+
 export type KeyTerm = { term: string; meaning_in_document: string; chunk_index: number };
+
 export type ClauseFinding = {
   title: string;
   what_it_says: string;
   why_inspect: string;
   chunk_index: number;
 };
+
 export type IssueFinding = { title: string; observation: string; chunk_index: number };
 
-type Analysis = {
+export type VisualItem = { label: string; detail?: string; step?: number };
+
+export type VisualIntelligence = {
+  type:
+    | "timeline"
+    | "obligation_flow"
+    | "responsibility_map"
+    | "process_flow"
+    | "clause_relationship"
+    | "decision_tree"
+    | "key_dates";
+  title: string;
+  items: VisualItem[];
+};
+
+export type SelaVersionSection = {
+  section_title: string;
+  chunk_index: number;
+  page_number: number;
+  what_it_says: string;
+  why_it_matters?: string | undefined;
+  who_it_affects?: string | undefined;
+  what_happens?: string | undefined;
+  important_dates?: string | undefined;
+  visual?: VisualIntelligence | undefined;
+};
+
+export type SelaVersion = {
+  summary: string;
+  sections: SelaVersionSection[];
+};
+
+export type Analysis = {
   overview: DocumentOverview;
   key_terms: KeyTerm[];
   clauses: ClauseFinding[];
   issues: IssueFinding[];
+  sela_version: SelaVersion;
 };
 
 const obj = (props: Record<string, unknown>) => ({
@@ -82,30 +133,108 @@ const analysisSchema = obj({
       chunk_index: { type: "integer" },
     }),
   },
+  sela_version: obj({
+    summary: { type: "string" },
+    sections: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          section_title: { type: "string" },
+          chunk_index: { type: "integer" },
+          page_number: { type: "integer" },
+          what_it_says: { type: "string" },
+          why_it_matters: { type: "string" },
+          who_it_affects: { type: "string" },
+          what_happens: { type: "string" },
+          important_dates: { type: "string" },
+          visual: {
+            type: "object",
+            properties: {
+              type: {
+                type: "string",
+                enum: [
+                  "timeline",
+                  "obligation_flow",
+                  "responsibility_map",
+                  "process_flow",
+                  "clause_relationship",
+                  "decision_tree",
+                  "key_dates",
+                ],
+              },
+              title: { type: "string" },
+              items: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    label: { type: "string" },
+                    detail: { type: "string" },
+                    step: { type: "integer" },
+                  },
+                  required: ["label"],
+                },
+              },
+            },
+            required: ["type", "title", "items"],
+          },
+        },
+        required: ["section_title", "chunk_index", "page_number", "what_it_says"],
+      },
+    },
+  }),
 });
 
 const answerSchema = obj({
   sufficient: { type: "boolean" },
   answer: { type: "string" },
   citations: { type: "array", items: { type: "integer" } },
+  follow_ups: { type: "array", items: { type: "string" } },
 });
 
-const ANALYSIS_INSTRUCTIONS = `You are SELA, a careful legal-document reading assistant.
-You are given numbered passages from ONE document. Work only from those passages.
+const ANALYSIS_INSTRUCTIONS = `You are SELA, a precise legal-document intelligence system.
+You are given numbered passages from ONE document. Work ONLY from those passages.
 Rules:
-- Never invent parties, dates, clauses, laws, or quotations. If the document does not say it, leave it out.
-- Write in plain language a non-lawyer can follow. No legal advice, no verdicts, no scores.
-- Every finding must cite the passage number it came from in chunk_index.
-- "issues" are descriptive observations worth inspecting (unusual, one-sided, open-ended, missing or ambiguous information), never risk ratings.
-- If the document is short or thin, return fewer items rather than padding.
-- Aim for up to 10 key terms, up to 10 clauses, and up to 8 issues.`;
+1. SELA'S VERSION must be a faithful, source-grounded representation of the document for understanding and review.
+   Preserve all obligations, rights, conditions, exceptions, qualifications, dates, amounts, parties, and ambiguities.
+   Never invent information. Never silently resolve ambiguity.
+   Structure sections with: WHAT IT SAYS, WHY IT MATTERS, WHO IT AFFECTS, WHAT HAPPENS, IMPORTANT DATES, and VISUAL (where helpful: timeline, obligation_flow, responsibility_map, process_flow).
+   CRITICAL FIDELITY & GROUNDING CONSTRAINTS:
+   - Every field must be strictly grounded in the passage.
+   - If a field (e.g. who_it_affects, what_happens, important_dates) is not specified or supported in that passage, omit it or leave it undefined.
+   - NEVER generate generic filler such as "Operates according to standard contract terms", "Standard rules apply", or boilerplate.
+   - For who_it_affects, include ONLY the specific entities or roles explicitly mentioned in that clause. Never copy document-wide parties.
+2. "overview": Extract document type, core purpose, overall summary, named parties, binding dates with chunk citations, and priority focus items.
+3. "key_terms": Defined terms with meaning in context of this document.
+4. "clauses": Major clauses with what it says and why inspect.
+5. "issues": Descriptive observations of one-sided terms, ambiguities, or missing standards. Never risk scores.`;
+
+async function getOwnedDocument(
+  supabaseClient: { from: (table: string) => { select: (columns: string) => { eq: (column: string, value: string) => { eq: (column: string, value: string) => { single: () => Promise<{ data: { id: string; title: string; status: string; user_id?: string; overview?: unknown; key_terms?: unknown; clauses?: unknown; issues?: unknown; file_name?: string; page_count?: number | null; status_detail?: string | null; error_message?: string | null } | null; error: { message: string } | null> } } } } } },
+  documentId: string,
+  userId: string,
+) {
+  const { data, error } = await supabaseClient
+    .from("documents")
+    .select("id, title, status, user_id, overview, key_terms, clauses, issues, file_name, page_count, status_detail, error_message")
+    .eq("id", documentId)
+    .eq("user_id", userId)
+    .single();
+
+  if (error || !data) {
+    throw new Error("That document could not be found.");
+  }
+
+  return data;
+}
 
 const ANSWER_INSTRUCTIONS = `You are SELA, answering a question about ONE legal document using only the numbered passages provided.
 Rules:
-- Answer only from the passages. Never invent text, clauses, dates, parties or law.
-- If the passages do not support an answer, set sufficient to false and say plainly that the document does not provide enough to answer, naming what is missing.
-- Plain language. No legal advice or final determinations.
-- List the passage numbers you relied on in citations.`;
+1. Primary Answer ("FROM YOUR DOCUMENT"): Ground every statement in the provided passages. Never invent law or facts.
+2. If passages do not contain enough information to answer completely, set sufficient to false and explain what is missing.
+3. Citations ("citations"): List the exact Passage IDs (integers, e.g. [0, 4]) of every passage you directly referenced or relied on. Every factual claim MUST cite at least one Passage ID from the provided passages. Never return an empty citations array if you extracted answers from the passages.
+4. Follow-up Questions ("follow_ups"): Generate 2 to 4 genuinely useful, specific follow-up questions directly related to this question and document to help the user investigate further. Never generate generic conversational filler.`;
 
 function buildContext(
   chunks: Array<{ chunk_index: number; page_number: number; content: string }>,
@@ -114,7 +243,7 @@ function buildContext(
   let used = 0;
   const parts: string[] = [];
   for (const chunk of chunks) {
-    const block = `[passage ${chunk.chunk_index} | page ${chunk.page_number}]\n${chunk.content}`;
+    const block = `[Passage ID: ${chunk.chunk_index} | Page ${chunk.page_number}]\n${chunk.content}`;
     if (used + block.length > charBudget) break;
     parts.push(block);
     used += block.length;
@@ -128,16 +257,14 @@ export const processDocument = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     const { embedTexts, generateStructured } = await import("./ai.server");
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
-    const { data: doc, error: docError } = await supabase
-      .from("documents")
-      .select("id, title, status")
-      .eq("id", data.documentId)
-      .single();
-    if (docError || !doc) throw new Error("That document could not be found.");
+    const doc = await getOwnedDocument(supabase, data.documentId, userId);
+
+    const dbClient = supabaseAdmin ?? supabase;
 
     const fail = async (message: string) => {
-      await supabase
+      await dbClient
         .from("documents")
         .update({
           status: "failed",
@@ -158,7 +285,7 @@ export const processDocument = createServerFn({ method: "POST" })
       if (!chunks || chunks.length === 0)
         throw new Error("No readable text was found in this document.");
 
-      await supabase
+      await dbClient
         .from("documents")
         .update({ status: "preparing", status_detail: "Reading the document" })
         .eq("id", data.documentId);
@@ -174,13 +301,13 @@ export const processDocument = createServerFn({ method: "POST" })
         embedding: JSON.stringify(embeddings[index]),
       }));
       for (let i = 0; i < rows.length; i += 40) {
-        const { error } = await supabase.from("document_chunks").upsert(rows.slice(i, i + 40));
+        const { error } = await dbClient.from("document_chunks").upsert(rows.slice(i, i + 40));
         if (error) throw new Error(error.message);
       }
 
-      await supabase
+      await dbClient
         .from("documents")
-        .update({ status_detail: "Reviewing the document" })
+        .update({ status_detail: "Reviewing SELA'S VERSION & structured intelligence" })
         .eq("id", data.documentId);
 
       const analysis = await generateStructured<Analysis>({
@@ -191,10 +318,16 @@ export const processDocument = createServerFn({ method: "POST" })
         effort: "medium",
       });
 
-      const { error: saveError } = await supabase
+      // Attach sela_version inside overview / clauses payload so it persists without schema breakage
+      const enrichedOverview = {
+        ...analysis.overview,
+        sela_version: analysis.sela_version,
+      };
+
+      const { error: saveError } = await dbClient
         .from("documents")
         .update({
-          overview: analysis.overview,
+          overview: enrichedOverview,
           key_terms: analysis.key_terms,
           clauses: analysis.clauses,
           issues: analysis.issues,
@@ -220,59 +353,129 @@ export const askDocument = createServerFn({ method: "POST" })
   .validator((input: unknown) => AskInput.parse(input))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const { embedTexts, generateStructured } = await import("./ai.server");
+    const { embedTexts, generateStructured, verifyExternalSources } = await import("./ai.server");
 
-    const { data: doc, error: docError } = await supabase
-      .from("documents")
-      .select("id, title, status")
-      .eq("id", data.documentId)
-      .single();
-    if (docError || !doc) throw new Error("That document could not be found.");
+    const doc = await getOwnedDocument(supabase, data.documentId, userId);
     if (doc.status !== "ready") throw new Error("This document is still being prepared.");
 
-    const [questionEmbedding] = await embedTexts([data.question]);
-    const { data: matches, error: matchError } = await supabase.rpc("match_document_chunks", {
-      p_document_id: data.documentId,
-      p_query_embedding: JSON.stringify(questionEmbedding),
-      p_match_count: 10,
-    });
-    if (matchError) throw new Error(matchError.message);
+    const mode =
+      data.searchMode === "external"
+        ? "external"
+        : data.verifyExternal || data.searchMode === "both"
+          ? "both"
+          : "document";
 
-    const passages = (matches ?? []).map((m) => ({
-      chunk_index: m.chunk_index,
-      page_number: m.page_number,
-      content: m.content,
-    }));
+    let result = {
+      sufficient: true,
+      answer: "",
+      citations: [] as number[],
+      follow_ups: [] as string[],
+    };
+    let cited: Array<{ chunkIndex: number; page: number; excerpt: string }> = [];
+    let externalVerification: {
+      status: "CONSISTENT" | "DIFFERS" | "NOT FOUND" | "NEEDS CONTEXT" | "UNAVAILABLE";
+      summary: string;
+      how_they_relate?: string;
+      sources: Array<{ title: string; url: string; published_date?: string }>;
+    } | null = null;
 
-    let result: { sufficient: boolean; answer: string; citations: number[] };
-    if (passages.length === 0) {
-      result = {
-        sufficient: false,
-        answer:
-          "This document does not contain passages that address your question, so SELA cannot answer it from the document.",
-        citations: [],
-      };
-    } else {
-      result = await generateStructured({
-        instructions: ANSWER_INSTRUCTIONS,
-        input: `Document title: ${doc.title}\n\nQuestion: ${data.question}\n\nPassages:\n\n${buildContext(
-          passages,
-          60000,
-        )}`,
-        schemaName: "document_answer",
-        schema: answerSchema,
-        effort: "low",
+    if (mode === "document" || mode === "both") {
+      const [questionEmbedding] = await embedTexts([data.question]);
+      const { data: matches, error: matchError } = await supabase.rpc("match_document_chunks", {
+        p_document_id: data.documentId,
+        p_query_embedding: JSON.stringify(questionEmbedding),
+        p_match_count: 10,
       });
+      if (matchError) throw new Error(matchError.message);
+
+      const passages = (matches ?? []).map((m) => ({
+        chunk_index: m.chunk_index,
+        page_number: m.page_number,
+        content: m.content,
+      }));
+
+      // Ensure initial preamble passages are present
+      const hasPreamble = passages.some((p) => p.chunk_index === 0 || p.chunk_index === 1);
+      if (!hasPreamble) {
+        const { data: introChunks } = await supabase
+          .from("document_chunks")
+          .select("chunk_index, page_number, content")
+          .eq("document_id", data.documentId)
+          .in("chunk_index", [0, 1])
+          .order("chunk_index", { ascending: true });
+        if (introChunks && introChunks.length > 0) {
+          passages.unshift(...introChunks);
+        }
+      }
+
+      if (passages.length === 0) {
+        result = {
+          sufficient: false,
+          answer:
+            "This document does not contain passages that address your question, so SELA cannot answer it from the document.",
+          citations: [],
+          follow_ups: [
+            "Which section of the document covers this topic?",
+            "What are the general obligations specified in this agreement?",
+          ],
+        };
+      } else {
+        result = await generateStructured({
+          instructions: ANSWER_INSTRUCTIONS,
+          input: `Document title: ${doc.title}\n\nQuestion: ${data.question}\n\nPassages:\n\n${buildContext(
+            passages,
+            60000,
+          )}`,
+          schemaName: "document_answer",
+          schema: answerSchema,
+          effort: "low",
+          maxTokens: 1536,
+        });
+      }
+
+      cited = result.citations
+        .map((index) => passages.find((p) => p.chunk_index === index))
+        .filter((p): p is (typeof passages)[number] => Boolean(p))
+        .map((p) => ({
+          chunkIndex: p.chunk_index,
+          page: p.page_number,
+          excerpt: p.content.length > 900 ? `${p.content.slice(0, 900)}…` : p.content,
+        }));
     }
 
-    const cited = result.citations
-      .map((index) => passages.find((p) => p.chunk_index === index))
-      .filter((p): p is (typeof passages)[number] => Boolean(p))
-      .map((p) => ({
-        chunkIndex: p.chunk_index,
-        page: p.page_number,
-        excerpt: p.content.length > 900 ? `${p.content.slice(0, 900)}…` : p.content,
-      }));
+    if (mode === "both" || mode === "external") {
+      externalVerification = await verifyExternalSources({
+        question: data.question,
+        documentAnswer: result.answer || undefined,
+        documentTitle: doc.title,
+      });
+
+      if (mode === "external") {
+        result.answer =
+          externalVerification.status === "UNAVAILABLE"
+            ? "SELA could not complete the external source check right now."
+            : externalVerification.summary;
+        result.sufficient = externalVerification.status !== "UNAVAILABLE";
+        result.follow_ups = [
+          "What specific statutes govern this matter in this jurisdiction?",
+          "How do standard industry legal practices handle this issue?",
+          "Are there relevant court precedents or regulatory advisories?",
+        ];
+      } else if (mode === "both" && externalVerification.how_they_relate) {
+        result.follow_ups = [
+          ...result.follow_ups,
+          "Does public regulation require terms beyond what this agreement states?",
+          "How do legal authorities treat discrepancies with standard terms?",
+        ].slice(0, 4);
+      }
+    }
+
+    const citationsPayload = {
+      list: cited,
+      external_verification: externalVerification,
+      follow_ups: result.follow_ups || [],
+      mode,
+    };
 
     const { data: saved, error: saveError } = await supabase
       .from("document_questions")
@@ -281,12 +484,247 @@ export const askDocument = createServerFn({ method: "POST" })
         user_id: userId,
         question: data.question,
         answer: result.answer,
-        citations: cited,
-        sufficient: result.sufficient && cited.length > 0,
+        citations: citationsPayload,
+        sufficient: result.sufficient && (mode === "external" || cited.length > 0),
       })
-      .select("id, question, answer, citations, sufficient, created_at")
+      .select("id, question, answer, sufficient, created_at")
       .single();
     if (saveError) throw new Error(saveError.message);
 
-    return saved;
+    return {
+      ...saved,
+      citations: cited,
+      follow_ups: result.follow_ups || [],
+      external_verification: externalVerification,
+    };
+  });
+
+export const explainWithSela = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input: unknown) => ExplainInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    const { generateStructured, translateExplanatoryText } = await import("./ai.server");
+
+    const doc = await getOwnedDocument(supabase, data.documentId, userId);
+    void doc;
+
+    let textToExplain = data.text || "";
+    let pageNum = 1;
+    const chunkIdx = data.chunkIndex || 0;
+
+    if (!textToExplain && data.chunkIndex !== undefined) {
+      const { data: chunk } = await supabase
+        .from("document_chunks")
+        .select("content, page_number")
+        .eq("document_id", data.documentId)
+        .eq("chunk_index", data.chunkIndex)
+        .single();
+      if (chunk) {
+        textToExplain = chunk.content;
+        pageNum = chunk.page_number;
+      }
+    }
+
+    if (!textToExplain) {
+      throw new Error("No passage text provided to explain.");
+    }
+
+    const explainSchema = obj({
+      section_title: { type: "string" },
+      what_it_says: { type: "string" },
+      why_it_matters: { type: "string" },
+      who_it_affects: { type: "string" },
+      what_happens: { type: "string" },
+      important_dates: { type: "string" },
+      visual: {
+        type: "object",
+        properties: {
+          type: {
+            type: "string",
+            enum: [
+              "timeline",
+              "obligation_flow",
+              "responsibility_map",
+              "process_flow",
+              "clause_relationship",
+              "decision_tree",
+              "key_dates",
+            ],
+          },
+          title: { type: "string" },
+          items: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                label: { type: "string" },
+                detail: { type: "string" },
+                step: { type: "integer" },
+              },
+              required: ["label"],
+            },
+          },
+        },
+        required: ["type", "title", "items"],
+      },
+    });
+
+    const explanation = await generateStructured<
+      Omit<SelaVersionSection, "chunk_index" | "page_number">
+    >({
+      instructions: `You are SELA. Explain this specific legal passage faithfully and clearly.
+Preserve all conditions, obligations, deadlines, and parties.
+CRITICAL FIDELITY RULES:
+- Every field must be strictly grounded in this passage.
+- If a field (e.g. who_it_affects, what_happens, important_dates) is not specified or supported in this passage, omit it.
+- NEVER invent generic filler such as "Operates according to standard contract terms".
+Output structured breakdown: section_title, what_it_says, why_it_matters, who_it_affects, what_happens, important_dates, visual diagram.`,
+      input: textToExplain,
+      schemaName: "passage_explanation",
+      schema: explainSchema,
+      effort: "low",
+      maxTokens: 1536,
+    });
+
+    // Translate if requested in non-English
+    let translated = explanation;
+    if (data.language && data.language !== "en") {
+      const translatedWhat = await translateExplanatoryText({
+        text: explanation.what_it_says,
+        targetLanguage: data.language,
+      });
+      const translatedWhy = explanation.why_it_matters
+        ? await translateExplanatoryText({
+            text: explanation.why_it_matters,
+            targetLanguage: data.language,
+          })
+        : undefined;
+      const translatedWho = explanation.who_it_affects
+        ? await translateExplanatoryText({
+            text: explanation.who_it_affects,
+            targetLanguage: data.language,
+          })
+        : undefined;
+      const translatedHappens = explanation.what_happens
+        ? await translateExplanatoryText({
+            text: explanation.what_happens,
+            targetLanguage: data.language,
+          })
+        : undefined;
+      const translatedDates = explanation.important_dates
+        ? await translateExplanatoryText({
+            text: explanation.important_dates,
+            targetLanguage: data.language,
+          })
+        : undefined;
+
+      translated = {
+        ...explanation,
+        what_it_says: translatedWhat,
+        ...(translatedWhy ? { why_it_matters: translatedWhy } : {}),
+        ...(translatedWho ? { who_it_affects: translatedWho } : {}),
+        ...(translatedHappens ? { what_happens: translatedHappens } : {}),
+        ...(translatedDates ? { important_dates: translatedDates } : {}),
+      };
+    }
+
+    return {
+      ...translated,
+      chunk_index: chunkIdx,
+      page_number: pageNum,
+    };
+  });
+
+export const translateSelaVersion = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input: unknown) => TranslateInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    const { translateSelaVersionBatch } = await import("./ai.server");
+
+    await getOwnedDocument(supabase, data.documentId, userId);
+
+    if (data.targetLanguage === "en" || !data.sections || data.sections.length === 0) {
+      return { sections: data.sections || [] };
+    }
+
+    // Check if translation is already cached in documents table
+    const { data: doc } = await supabase
+      .from("documents")
+      .select("overview")
+      .eq("id", data.documentId)
+      .single();
+
+    const overview = (doc?.overview as Record<string, unknown> | null) || {};
+    const cachedTranslations =
+      (overview["translations"] as Record<string, SelaVersionSection[]> | undefined) || {};
+    const cachedList = cachedTranslations[data.targetLanguage];
+    if (cachedList && cachedList.length > 0) {
+      return { sections: cachedList };
+    }
+
+    // Build batch payload
+    const itemsToTranslate = data.sections.map((s: SelaVersionSection, idx: number) => ({
+      section_index: idx,
+      section_title: s.section_title,
+      what_it_says: s.what_it_says,
+      ...(s.why_it_matters ? { why_it_matters: s.why_it_matters } : {}),
+      ...(s.who_it_affects ? { who_it_affects: s.who_it_affects } : {}),
+      ...(s.what_happens ? { what_happens: s.what_happens } : {}),
+      ...(s.important_dates ? { important_dates: s.important_dates } : {}),
+    }));
+
+    const translatedResults = await translateSelaVersionBatch({
+      items: itemsToTranslate,
+      targetLanguage: data.targetLanguage,
+    });
+
+    const resultMap = new Map(translatedResults.map((r) => [r.section_index, r]));
+
+    const translatedSections: SelaVersionSection[] = data.sections.map(
+      (sec: SelaVersionSection, idx: number) => {
+        const trans = resultMap.get(idx);
+        return {
+          ...sec,
+          section_title: trans?.section_title || sec.section_title,
+          what_it_says: trans?.what_it_says || sec.what_it_says,
+          ...(trans?.why_it_matters
+            ? { why_it_matters: trans.why_it_matters }
+            : sec.why_it_matters
+              ? { why_it_matters: sec.why_it_matters }
+              : {}),
+          ...(trans?.who_it_affects
+            ? { who_it_affects: trans.who_it_affects }
+            : sec.who_it_affects
+              ? { who_it_affects: sec.who_it_affects }
+              : {}),
+          ...(trans?.what_happens
+            ? { what_happens: trans.what_happens }
+            : sec.what_happens
+              ? { what_happens: sec.what_happens }
+              : {}),
+          ...(trans?.important_dates
+            ? { important_dates: trans.important_dates }
+            : sec.important_dates
+              ? { important_dates: sec.important_dates }
+              : {}),
+        };
+      },
+    );
+
+    // Persist translation to document overview cache in background
+    const updatedOverview = {
+      ...overview,
+      translations: {
+        ...cachedTranslations,
+        [data.targetLanguage]: translatedSections,
+      },
+    };
+    await supabase
+      .from("documents")
+      .update({ overview: updatedOverview })
+      .eq("id", data.documentId);
+
+    return { sections: translatedSections };
   });

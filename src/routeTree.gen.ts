@@ -12,9 +12,22 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthRouteImport } from './routes/auth'
+import { Route as AuthenticatedAboutRouteImport } from './routes/_authenticated/about'
+import { Route as AuthenticatedAppRouteImport } from './routes/_authenticated/app'
+import { Route as AuthenticatedHomeRouteImport } from './routes/_authenticated/home'
 import { Route as AuthenticatedWorkspaceRouteImport } from './routes/_authenticated/workspace'
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
+import { Route as AuthenticatedAppIndexRouteImport } from './routes/_authenticated/app.index'
+import { Route as AuthenticatedAppAboutRouteImport } from './routes/_authenticated/app.about'
+import { Route as AuthenticatedAppAskSelaRouteImport } from './routes/_authenticated/app.ask-sela'
+import { Route as AuthenticatedAppDocumentsRouteImport } from './routes/_authenticated/app.documents'
+import { Route as AuthenticatedAppHomeRouteImport } from './routes/_authenticated/app.home'
+import { Route as AuthenticatedAppProfileRouteImport } from './routes/_authenticated/app.profile'
+import { Route as AuthenticatedAppReviewRouteImport } from './routes/_authenticated/app.review'
+import { Route as AuthenticatedAppSettingsRouteImport } from './routes/_authenticated/app.settings'
 import { Route as AuthenticatedDocumentsDocumentIdRouteImport } from './routes/_authenticated/documents.$documentId'
+import { Route as AuthenticatedAppDocumentsIndexRouteImport } from './routes/_authenticated/app.documents.index'
+import { Route as AuthenticatedAppDocumentsDocumentIdReviewRouteImport } from './routes/_authenticated/app.documents.$documentId.review'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -30,6 +43,21 @@ const AuthRoute = AuthRouteImport.update({
   path: '/auth',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedAboutRoute = AuthenticatedAboutRouteImport.update({
+  id: '/about',
+  path: '/about',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedAppRoute = AuthenticatedAppRouteImport.update({
+  id: '/app',
+  path: '/app',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedHomeRoute = AuthenticatedHomeRouteImport.update({
+  id: '/home',
+  path: '/home',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedWorkspaceRoute = AuthenticatedWorkspaceRouteImport.update({
   id: '/workspace',
   path: '/workspace',
@@ -40,50 +68,187 @@ const AuthCallbackRoute = AuthCallbackRouteImport.update({
   path: '/callback',
   getParentRoute: () => AuthRoute,
 } as any)
+const AuthenticatedAppIndexRoute = AuthenticatedAppIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AuthenticatedAppRoute,
+} as any)
+const AuthenticatedAppAboutRoute = AuthenticatedAppAboutRouteImport.update({
+  id: '/about',
+  path: '/about',
+  getParentRoute: () => AuthenticatedAppRoute,
+} as any)
+const AuthenticatedAppAskSelaRoute = AuthenticatedAppAskSelaRouteImport.update({
+  id: '/ask-sela',
+  path: '/ask-sela',
+  getParentRoute: () => AuthenticatedAppRoute,
+} as any)
+const AuthenticatedAppDocumentsRoute =
+  AuthenticatedAppDocumentsRouteImport.update({
+    id: '/documents',
+    path: '/documents',
+    getParentRoute: () => AuthenticatedAppRoute,
+  } as any)
+const AuthenticatedAppHomeRoute = AuthenticatedAppHomeRouteImport.update({
+  id: '/home',
+  path: '/home',
+  getParentRoute: () => AuthenticatedAppRoute,
+} as any)
+const AuthenticatedAppProfileRoute = AuthenticatedAppProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
+  getParentRoute: () => AuthenticatedAppRoute,
+} as any)
+const AuthenticatedAppReviewRoute = AuthenticatedAppReviewRouteImport.update({
+  id: '/review',
+  path: '/review',
+  getParentRoute: () => AuthenticatedAppRoute,
+} as any)
+const AuthenticatedAppSettingsRoute =
+  AuthenticatedAppSettingsRouteImport.update({
+    id: '/settings',
+    path: '/settings',
+    getParentRoute: () => AuthenticatedAppRoute,
+  } as any)
 const AuthenticatedDocumentsDocumentIdRoute =
   AuthenticatedDocumentsDocumentIdRouteImport.update({
     id: '/documents/$documentId',
     path: '/documents/$documentId',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedAppDocumentsIndexRoute =
+  AuthenticatedAppDocumentsIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AuthenticatedAppDocumentsRoute,
+  } as any)
+const AuthenticatedAppDocumentsDocumentIdReviewRoute =
+  AuthenticatedAppDocumentsDocumentIdReviewRouteImport.update({
+    id: '/$documentId/review',
+    path: '/$documentId/review',
+    getParentRoute: () => AuthenticatedAppDocumentsRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRouteWithChildren
+  '/about': typeof AuthenticatedAboutRoute
+  '/app': typeof AuthenticatedAppRouteWithChildren
+  '/home': typeof AuthenticatedHomeRoute
   '/workspace': typeof AuthenticatedWorkspaceRoute
   '/auth/callback': typeof AuthCallbackRoute
+  '/app/about': typeof AuthenticatedAppAboutRoute
+  '/app/ask-sela': typeof AuthenticatedAppAskSelaRoute
+  '/app/documents': typeof AuthenticatedAppDocumentsRouteWithChildren
+  '/app/home': typeof AuthenticatedAppHomeRoute
+  '/app/profile': typeof AuthenticatedAppProfileRoute
+  '/app/review': typeof AuthenticatedAppReviewRoute
+  '/app/settings': typeof AuthenticatedAppSettingsRoute
   '/documents/$documentId': typeof AuthenticatedDocumentsDocumentIdRoute
+  '/app/': typeof AuthenticatedAppIndexRoute
+  '/app/documents/': typeof AuthenticatedAppDocumentsIndexRoute
+  '/app/documents/$documentId/review': typeof AuthenticatedAppDocumentsDocumentIdReviewRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRouteWithChildren
+  '/about': typeof AuthenticatedAboutRoute
+  '/home': typeof AuthenticatedHomeRoute
   '/workspace': typeof AuthenticatedWorkspaceRoute
   '/auth/callback': typeof AuthCallbackRoute
+  '/app/about': typeof AuthenticatedAppAboutRoute
+  '/app/ask-sela': typeof AuthenticatedAppAskSelaRoute
+  '/app/home': typeof AuthenticatedAppHomeRoute
+  '/app/profile': typeof AuthenticatedAppProfileRoute
+  '/app/review': typeof AuthenticatedAppReviewRoute
+  '/app/settings': typeof AuthenticatedAppSettingsRoute
   '/documents/$documentId': typeof AuthenticatedDocumentsDocumentIdRoute
+  '/app': typeof AuthenticatedAppIndexRoute
+  '/app/documents': typeof AuthenticatedAppDocumentsIndexRoute
+  '/app/documents/$documentId/review': typeof AuthenticatedAppDocumentsDocumentIdReviewRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRouteWithChildren
+  '/_authenticated/about': typeof AuthenticatedAboutRoute
+  '/_authenticated/app': typeof AuthenticatedAppRouteWithChildren
+  '/_authenticated/home': typeof AuthenticatedHomeRoute
   '/_authenticated/workspace': typeof AuthenticatedWorkspaceRoute
   '/auth/callback': typeof AuthCallbackRoute
+  '/_authenticated/app/about': typeof AuthenticatedAppAboutRoute
+  '/_authenticated/app/ask-sela': typeof AuthenticatedAppAskSelaRoute
+  '/_authenticated/app/documents': typeof AuthenticatedAppDocumentsRouteWithChildren
+  '/_authenticated/app/home': typeof AuthenticatedAppHomeRoute
+  '/_authenticated/app/profile': typeof AuthenticatedAppProfileRoute
+  '/_authenticated/app/review': typeof AuthenticatedAppReviewRoute
+  '/_authenticated/app/settings': typeof AuthenticatedAppSettingsRoute
   '/_authenticated/documents/$documentId': typeof AuthenticatedDocumentsDocumentIdRoute
+  '/_authenticated/app/': typeof AuthenticatedAppIndexRoute
+  '/_authenticated/app/documents/': typeof AuthenticatedAppDocumentsIndexRoute
+  '/_authenticated/app/documents/$documentId/review': typeof AuthenticatedAppDocumentsDocumentIdReviewRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/auth' | '/workspace' | '/auth/callback' | '/documents/$documentId'
+    | '/'
+    | '/auth'
+    | '/about'
+    | '/app'
+    | '/home'
+    | '/workspace'
+    | '/auth/callback'
+    | '/app/about'
+    | '/app/ask-sela'
+    | '/app/documents'
+    | '/app/home'
+    | '/app/profile'
+    | '/app/review'
+    | '/app/settings'
+    | '/documents/$documentId'
+    | '/app/'
+    | '/app/documents/'
+    | '/app/documents/$documentId/review'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth' | '/workspace' | '/auth/callback' | '/documents/$documentId'
+  to:
+    | '/'
+    | '/auth'
+    | '/about'
+    | '/home'
+    | '/workspace'
+    | '/auth/callback'
+    | '/app/about'
+    | '/app/ask-sela'
+    | '/app/home'
+    | '/app/profile'
+    | '/app/review'
+    | '/app/settings'
+    | '/documents/$documentId'
+    | '/app'
+    | '/app/documents'
+    | '/app/documents/$documentId/review'
   id:
     | '__root__'
     | '/'
     | '/_authenticated'
     | '/auth'
+    | '/_authenticated/about'
+    | '/_authenticated/app'
+    | '/_authenticated/home'
     | '/_authenticated/workspace'
     | '/auth/callback'
+    | '/_authenticated/app/about'
+    | '/_authenticated/app/ask-sela'
+    | '/_authenticated/app/documents'
+    | '/_authenticated/app/home'
+    | '/_authenticated/app/profile'
+    | '/_authenticated/app/review'
+    | '/_authenticated/app/settings'
     | '/_authenticated/documents/$documentId'
+    | '/_authenticated/app/'
+    | '/_authenticated/app/documents/'
+    | '/_authenticated/app/documents/$documentId/review'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -115,6 +280,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/about': {
+      id: '/_authenticated/about'
+      path: '/about'
+      fullPath: '/about'
+      preLoaderRoute: typeof AuthenticatedAboutRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/app': {
+      id: '/_authenticated/app'
+      path: '/app'
+      fullPath: '/app'
+      preLoaderRoute: typeof AuthenticatedAppRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/home': {
+      id: '/_authenticated/home'
+      path: '/home'
+      fullPath: '/home'
+      preLoaderRoute: typeof AuthenticatedHomeRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/workspace': {
       id: '/_authenticated/workspace'
       path: '/workspace'
@@ -129,6 +315,62 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthCallbackRouteImport
       parentRoute: typeof AuthRoute
     }
+    '/_authenticated/app/': {
+      id: '/_authenticated/app/'
+      path: '/'
+      fullPath: '/app/'
+      preLoaderRoute: typeof AuthenticatedAppIndexRouteImport
+      parentRoute: typeof AuthenticatedAppRoute
+    }
+    '/_authenticated/app/about': {
+      id: '/_authenticated/app/about'
+      path: '/about'
+      fullPath: '/app/about'
+      preLoaderRoute: typeof AuthenticatedAppAboutRouteImport
+      parentRoute: typeof AuthenticatedAppRoute
+    }
+    '/_authenticated/app/ask-sela': {
+      id: '/_authenticated/app/ask-sela'
+      path: '/ask-sela'
+      fullPath: '/app/ask-sela'
+      preLoaderRoute: typeof AuthenticatedAppAskSelaRouteImport
+      parentRoute: typeof AuthenticatedAppRoute
+    }
+    '/_authenticated/app/documents': {
+      id: '/_authenticated/app/documents'
+      path: '/documents'
+      fullPath: '/app/documents'
+      preLoaderRoute: typeof AuthenticatedAppDocumentsRouteImport
+      parentRoute: typeof AuthenticatedAppRoute
+    }
+    '/_authenticated/app/home': {
+      id: '/_authenticated/app/home'
+      path: '/home'
+      fullPath: '/app/home'
+      preLoaderRoute: typeof AuthenticatedAppHomeRouteImport
+      parentRoute: typeof AuthenticatedAppRoute
+    }
+    '/_authenticated/app/profile': {
+      id: '/_authenticated/app/profile'
+      path: '/profile'
+      fullPath: '/app/profile'
+      preLoaderRoute: typeof AuthenticatedAppProfileRouteImport
+      parentRoute: typeof AuthenticatedAppRoute
+    }
+    '/_authenticated/app/review': {
+      id: '/_authenticated/app/review'
+      path: '/review'
+      fullPath: '/app/review'
+      preLoaderRoute: typeof AuthenticatedAppReviewRouteImport
+      parentRoute: typeof AuthenticatedAppRoute
+    }
+    '/_authenticated/app/settings': {
+      id: '/_authenticated/app/settings'
+      path: '/settings'
+      fullPath: '/app/settings'
+      preLoaderRoute: typeof AuthenticatedAppSettingsRouteImport
+      parentRoute: typeof AuthenticatedAppRoute
+    }
     '/_authenticated/documents/$documentId': {
       id: '/_authenticated/documents/$documentId'
       path: '/documents/$documentId'
@@ -136,15 +378,77 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedDocumentsDocumentIdRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/app/documents/': {
+      id: '/_authenticated/app/documents/'
+      path: '/'
+      fullPath: '/app/documents/'
+      preLoaderRoute: typeof AuthenticatedAppDocumentsIndexRouteImport
+      parentRoute: typeof AuthenticatedAppDocumentsRoute
+    }
+    '/_authenticated/app/documents/$documentId/review': {
+      id: '/_authenticated/app/documents/$documentId/review'
+      path: '/$documentId/review'
+      fullPath: '/app/documents/$documentId/review'
+      preLoaderRoute: typeof AuthenticatedAppDocumentsDocumentIdReviewRouteImport
+      parentRoute: typeof AuthenticatedAppDocumentsRoute
+    }
   }
 }
 
+interface AuthenticatedAppDocumentsRouteChildren {
+  AuthenticatedAppDocumentsIndexRoute: typeof AuthenticatedAppDocumentsIndexRoute
+  AuthenticatedAppDocumentsDocumentIdReviewRoute: typeof AuthenticatedAppDocumentsDocumentIdReviewRoute
+}
+
+const AuthenticatedAppDocumentsRouteChildren: AuthenticatedAppDocumentsRouteChildren =
+  {
+    AuthenticatedAppDocumentsIndexRoute: AuthenticatedAppDocumentsIndexRoute,
+    AuthenticatedAppDocumentsDocumentIdReviewRoute:
+      AuthenticatedAppDocumentsDocumentIdReviewRoute,
+  }
+
+const AuthenticatedAppDocumentsRouteWithChildren =
+  AuthenticatedAppDocumentsRoute._addFileChildren(
+    AuthenticatedAppDocumentsRouteChildren,
+  )
+
+interface AuthenticatedAppRouteChildren {
+  AuthenticatedAppAboutRoute: typeof AuthenticatedAppAboutRoute
+  AuthenticatedAppAskSelaRoute: typeof AuthenticatedAppAskSelaRoute
+  AuthenticatedAppDocumentsRoute: typeof AuthenticatedAppDocumentsRouteWithChildren
+  AuthenticatedAppHomeRoute: typeof AuthenticatedAppHomeRoute
+  AuthenticatedAppProfileRoute: typeof AuthenticatedAppProfileRoute
+  AuthenticatedAppReviewRoute: typeof AuthenticatedAppReviewRoute
+  AuthenticatedAppSettingsRoute: typeof AuthenticatedAppSettingsRoute
+  AuthenticatedAppIndexRoute: typeof AuthenticatedAppIndexRoute
+}
+
+const AuthenticatedAppRouteChildren: AuthenticatedAppRouteChildren = {
+  AuthenticatedAppAboutRoute: AuthenticatedAppAboutRoute,
+  AuthenticatedAppAskSelaRoute: AuthenticatedAppAskSelaRoute,
+  AuthenticatedAppDocumentsRoute: AuthenticatedAppDocumentsRouteWithChildren,
+  AuthenticatedAppHomeRoute: AuthenticatedAppHomeRoute,
+  AuthenticatedAppProfileRoute: AuthenticatedAppProfileRoute,
+  AuthenticatedAppReviewRoute: AuthenticatedAppReviewRoute,
+  AuthenticatedAppSettingsRoute: AuthenticatedAppSettingsRoute,
+  AuthenticatedAppIndexRoute: AuthenticatedAppIndexRoute,
+}
+
+const AuthenticatedAppRouteWithChildren =
+  AuthenticatedAppRoute._addFileChildren(AuthenticatedAppRouteChildren)
+
 interface AuthenticatedRouteRouteChildren {
+  AuthenticatedAboutRoute: typeof AuthenticatedAboutRoute
+  AuthenticatedAppRoute: typeof AuthenticatedAppRouteWithChildren
+  AuthenticatedHomeRoute: typeof AuthenticatedHomeRoute
   AuthenticatedWorkspaceRoute: typeof AuthenticatedWorkspaceRoute
   AuthenticatedDocumentsDocumentIdRoute: typeof AuthenticatedDocumentsDocumentIdRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
+  AuthenticatedAboutRoute: AuthenticatedAboutRoute,
+  AuthenticatedAppRoute: AuthenticatedAppRouteWithChildren,
+  AuthenticatedHomeRoute: AuthenticatedHomeRoute,
   AuthenticatedWorkspaceRoute: AuthenticatedWorkspaceRoute,
   AuthenticatedDocumentsDocumentIdRoute: AuthenticatedDocumentsDocumentIdRoute,
 }
