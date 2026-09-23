@@ -4,7 +4,7 @@
 
 SELA is an AI-powered legal document intelligence workspace designed to help individuals, legal teams, and business operators understand contracts and legal documents clearly. Built on an evidence-first philosophy, SELA organizes complex agreements into an interactive review workspace, produces plain-language explanations with preserved legal fidelity, supports grounded multi-scope question answering, and exports structured Expert Memos to PDF.
 
-*Disclaimer: SELA is an interactive reading and review aid, not a law firm or a lawyer. It does not provide formal legal advice or make binding legal determinations. For consequential legal decisions, consult a qualified professional.*
+_Disclaimer: SELA is an interactive reading and review aid, not a law firm or a lawyer. It does not provide formal legal advice or make binding legal determinations. For consequential legal decisions, consult a qualified professional._
 
 - **Live Application:** [https://sela-ai-zeta.vercel.app](https://sela-ai-zeta.vercel.app)
 - **GitHub Repository:** [https://github.com/pd585/sela-ai](https://github.com/pd585/sela-ai)
@@ -14,6 +14,7 @@ SELA is an AI-powered legal document intelligence workspace designed to help ind
 ## The Problem
 
 Contracts and legal agreements often obscure critical obligations, deadlines, liabilities, and exceptions under dense legal terminology. When non-lawyers or busy professionals try to evaluate these documents, they face significant friction:
+
 - **Hidden Risks:** Ambiguous notice periods, asymmetric indemnities, automatic renewal traps, and non-refundable fees are buried deep within pages of boilerplate.
 - **Hallucination Risk:** Generic AI chat assistants summarize documents without verifiable citations, often confusing dates or inventing terms.
 - **Unclear Authority:** AI-generated summaries frequently blur the line between what the contract actually states versus external legal assumptions.
@@ -51,13 +52,15 @@ Upload (PDF/DOCX)
 ## Key Capabilities
 
 ### 1. Document Understanding & Overview
+
 - **Document Metadata & Purpose:** Identifies governing document type, primary commercial purpose, and contracting parties.
 - **Key Terms Directory:** Extracts defined terms alongside their document-specific meanings with direct links to defining chunks.
-- **Clauses & Observations:** Summarizes critical operational clauses (*What It Says*) and highlights clauses requiring inspection (*Why Inspect*).
+- **Clauses & Observations:** Summarizes critical operational clauses (_What It Says_) and highlights clauses requiring inspection (_Why Inspect_).
 - **Descriptive Issues:** Identifies open-ended commitments, missing safeguards, and ambiguous terms factually without arbitrary scores.
 - **Source Passages:** Interactive drawer that displays exact extracted text excerpts and original page numbers.
 
 ### 2. Ask SELA (Evidence-Grounded Q&A)
+
 - **Document-Only Scope:** Answers questions strictly from document chunks; abstains with a clear explanation if the document does not contain the answer.
 - **Document + Web Search Scope:** Augments internal contract analysis with real-time public statutory, regulatory, and gazette citations.
 - **External-Only Scope:** Conducts public legal research independently of document context.
@@ -65,11 +68,13 @@ Upload (PDF/DOCX)
 - **Contextual Follow-Ups:** Automatically suggests 2–3 relevant follow-up questions to uncover related contractual nuances.
 
 ### 3. SELA'S VERSION & Side-by-Side Comparison
+
 - **Plain-Language Redlines:** Translates legalese into accessible terms while protecting core legal meaning.
 - **Obligation Preservation:** Maintains exact figures, deadlines, currencies, and conditions.
 - **Synchronized Comparison:** Dual-pane desktop view displaying the authoritative Original Document alongside SELA'S VERSION with coordinated navigation.
 
 ### 4. Explanations & Multilingual Support
+
 - **Contextual "Explain with SELA":** One-click clause explanations tailored for non-specialists.
 - **5 Supported Languages:**
   - **English (`en`)**
@@ -80,9 +85,11 @@ Upload (PDF/DOCX)
 - **Immutability Safeguards:** Numbers, party names, currencies, dates, and statute citations remain untranslated to prevent ambiguity.
 
 ### 5. Grounded Visual Intelligence
+
 - **Interactive Diagrams:** Renders structured timelines, obligation flows, responsibility maps, process flows, and clause relationship charts derived directly from document milestones.
 
 ### 6. Expert Memo & PDF Export
+
 - **Comprehensive Briefing:** Synthesizes executive summary, key risks, negotiation levers, SELA'S VERSION comparison, and statutory references.
 - **Client-Side PDF Generation:** Built with `jspdf` and `jspdf-autotable` for clean vector pagination, headers, structured tables, and disclaimer footers.
 
@@ -92,13 +99,13 @@ Upload (PDF/DOCX)
 
 SELA maintains a strict evidentiary hierarchy to guarantee transparency:
 
-| Layer | Authority Level | Role in Workspace |
-| :--- | :---: | :--- |
-| **Original Document** | **Authoritative (100%)** | The binding legal source of truth. Always preserved and viewable. |
-| **Document Sources** | **Primary Evidence** | Extracted page numbers and raw text passages backing every finding. |
-| **SELA'S VERSION** | **Interpretive Aid** | Plain-language rewriting for review and understanding; non-authoritative. |
-| **External Sources** | **Contextual Reference** | Public statutes, regulations, or case law retrieved via search; explicitly separated. |
-| **AI Reasoning Layer** | **Synthesis Engine** | Provider pipeline generating structured outputs under strict schema boundaries. |
+| Layer                  |     Authority Level      | Role in Workspace                                                                     |
+| :--------------------- | :----------------------: | :------------------------------------------------------------------------------------ |
+| **Original Document**  | **Authoritative (100%)** | The binding legal source of truth. Always preserved and viewable.                     |
+| **Document Sources**   |   **Primary Evidence**   | Extracted page numbers and raw text passages backing every finding.                   |
+| **SELA'S VERSION**     |   **Interpretive Aid**   | Plain-language rewriting for review and understanding; non-authoritative.             |
+| **External Sources**   | **Contextual Reference** | Public statutes, regulations, or case law retrieved via search; explicitly separated. |
+| **AI Reasoning Layer** |   **Synthesis Engine**   | Provider pipeline generating structured outputs under strict schema boundaries.       |
 
 ---
 
@@ -108,13 +115,13 @@ SELA maintains a strict evidentiary hierarchy to guarantee transparency:
 flowchart TD
     User([User / Browser]) <--> WebApp[TanStack Start + React 19 Frontend]
     WebApp <--> Nitro[Nitro SSR Engine & Server Functions]
-    
+
     subgraph Supabase Infrastructure
         Nitro <--> SupaAuth[Supabase Auth / Google OAuth PKCE]
         Nitro <--> SupaDB[(PostgreSQL + pgvector)]
         Nitro <--> SupaStore[Private Storage Bucket: documents]
     end
-    
+
     subgraph AI Provider Fallback Engine
         Nitro <--> AIProvider{Multi-Provider Fallback}
         AIProvider -->|Primary| Gemini[Google Gemini 2.5 Flash]
@@ -145,15 +152,15 @@ flowchart LR
 ```mermaid
 flowchart TD
     Query[User Question] --> ScopeSelector{Research Scope}
-    
+
     ScopeSelector -->|Document Only| DocSearch[pgvector Cosine Similarity Search]
     ScopeSelector -->|External Only| WebSearch[Google Search Tool Integration]
-    ScopeSelector -->|Document + External| Hybrid[Parallel pgvector + Web Search]
-    
+    ScopeSelector -->|Document + External| Hybrid[Sequential pgvector then Web Search]
+
     DocSearch --> Synthesizer[Structured AI Synthesizer]
     WebSearch --> Synthesizer
     Hybrid --> Synthesizer
-    
+
     Synthesizer --> Output[Answer + Traceable Citations + Distinct External Labels]
 ```
 
@@ -174,7 +181,7 @@ SELA features a 3-tier resilient provider pipeline configured in `src/lib/ai.ser
    - Local development failover (`http://localhost:11434` with `llama3.2`).
    - Ensures local offline development when third-party API keys are absent.
 
-*All provider outputs are validated through strict Zod schemas before reaching the client.*
+_All provider outputs are validated through strict Zod schemas before reaching the client._
 
 ---
 
@@ -193,26 +200,31 @@ SELA features a 3-tier resilient provider pipeline configured in `src/lib/ai.ser
 ## Local Development
 
 ### Prerequisites
+
 - **Node.js:** v20.x or later
 - **npm:** v10.x or later
 
 ### Step-by-Step Setup
 
 1. **Clone the repository:**
+
    ```sh
    git clone https://github.com/pd585/sela-ai.git
    cd sela-ai
    ```
 
 2. **Install dependencies:**
+
    ```sh
    npm ci
    ```
 
 3. **Configure environment variables:**
+
    ```sh
    cp .env.example .env
    ```
+
    Edit `.env` with your Supabase credentials and Gemini/OpenRouter API keys.
 
 4. **Start the local development server:**
@@ -225,19 +237,19 @@ SELA features a 3-tier resilient provider pipeline configured in `src/lib/ai.ser
 
 ## Environment Variables
 
-| Variable | Required | Description |
-| :--- | :---: | :--- |
-| `SUPABASE_URL` | Yes | Supabase project URL (Server-side) |
-| `SUPABASE_PUBLISHABLE_KEY` | Yes | Supabase publishable anon key (Server-side) |
-| `SUPABASE_SERVICE_ROLE_KEY` | Optional | Privileged Supabase service role key (Admin tasks) |
-| `VITE_SUPABASE_URL` | Yes | Supabase project URL (Client-side) |
-| `VITE_SUPABASE_PUBLISHABLE_KEY` | Yes | Supabase publishable anon key (Client-side) |
-| `GEMINI_API_KEY` | Yes (Primary) | Google Gemini API key for embeddings & analysis |
-| `GEMINI_LLM_MODEL` | Optional | Gemini model name (Default: `gemini-2.5-flash`) |
-| `OPENROUTER_API_KEY` | Optional | OpenRouter API key for fallback LLM completions |
-| `OPENROUTER_LLM_MODEL` | Optional | OpenRouter model identifier (Default: `google/gemini-flash-1.5`) |
-| `OLLAMA_BASE_URL` | Optional | Local Ollama endpoint (Default: `http://localhost:11434`) |
-| `OLLAMA_LLM_MODEL` | Optional | Local Ollama model (Default: `llama3.2`) |
+| Variable                        |   Required    | Description                                                      |
+| :------------------------------ | :-----------: | :--------------------------------------------------------------- |
+| `SUPABASE_URL`                  |      Yes      | Supabase project URL (Server-side)                               |
+| `SUPABASE_PUBLISHABLE_KEY`      |      Yes      | Supabase publishable anon key (Server-side)                      |
+| `SUPABASE_SERVICE_ROLE_KEY`     |   Optional    | Privileged Supabase service role key (Admin tasks)               |
+| `VITE_SUPABASE_URL`             |      Yes      | Supabase project URL (Client-side)                               |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` |      Yes      | Supabase publishable anon key (Client-side)                      |
+| `GEMINI_API_KEY`                | Yes (Primary) | Google Gemini API key for embeddings & analysis                  |
+| `GEMINI_LLM_MODEL`              |   Optional    | Gemini model name (Default: `gemini-2.5-flash`)                  |
+| `OPENROUTER_API_KEY`            |   Optional    | OpenRouter API key for fallback LLM completions                  |
+| `OPENROUTER_LLM_MODEL`          |   Optional    | OpenRouter model identifier (Default: `google/gemini-flash-1.5`) |
+| `OLLAMA_BASE_URL`               |   Optional    | Local Ollama endpoint (Default: `http://localhost:11434`)        |
+| `OLLAMA_LLM_MODEL`              |   Optional    | Local Ollama model (Default: `llama3.2`)                         |
 
 ---
 
@@ -263,6 +275,7 @@ npm audit --omit=dev --audit-level=high
 ```
 
 ### Current Quality Verification Status
+
 - **Automated Tests:** 31 / 31 tests passing across 7 test suites (`~2.7s` execution via dedicated `vitest.config.ts`).
 - **Type Safety:** 0 TypeScript errors under strict configuration.
 - **Linting:** 0 ESLint errors (6 standard Fast Refresh warnings in UI component primitives).
@@ -277,6 +290,7 @@ npm audit --omit=dev --audit-level=high
 Detailed setup instructions for PostgreSQL schemas, pgvector, and Google OAuth with PKCE are provided in [SUPABASE_SETUP.md](./SUPABASE_SETUP.md).
 
 ### Migration Files
+
 - `drizzle/migrations/0000_sela_core_schema.sql`: Core schema, documents table, chunks table with `vector(3072)` columns, RLS policies, and vector similarity RPC function.
 - `drizzle/migrations/0001_documents_storage_policies.sql`: Private storage bucket RLS policies scoping file access to `auth.uid()`.
 - `drizzle/migrations/0002_documents_bucket_limits.sql`: Bucket-level constraints enforcing 25 MB file size limit and MIME restrictions (`application/pdf`, `.docx`).

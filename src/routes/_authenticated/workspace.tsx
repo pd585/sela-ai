@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { processDocument } from "@/lib/sela.functions";
-import { extractDocument, chunkPages, validateDocumentFile } from "@/lib/extract-text";
+import { validateDocumentFile } from "@/lib/extract-text";
 import { AppShell } from "@/components/sela/shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -108,11 +108,6 @@ export function Workspace() {
     let storagePath: string | null = null;
     try {
       validateDocumentFile(file);
-      setUploadState("Reading the file");
-      const extracted = await extractDocument(file);
-      const chunks = chunkPages(extracted.pages);
-      if (chunks.length === 0)
-        throw new Error("No selectable text was found — SELA cannot read scanned images yet.");
 
       setUploadState("Storing the document");
       storagePath = `${userId}/${crypto.randomUUID()}-${file.name}`;
@@ -129,7 +124,6 @@ export function Workspace() {
           file_name: file.name,
           mime_type: file.type || "application/octet-stream",
           byte_size: file.size,
-          page_count: extracted.pageCount,
           storage_path: storagePath,
           status: "preparing",
           status_detail: "Preparing your document",
@@ -139,23 +133,11 @@ export function Workspace() {
       if (createError || !created) throw new Error(createError?.message ?? "Upload failed.");
       documentId = created.id;
 
-      setUploadState("Saving passages");
-      const rows = chunks.map((chunk) => ({
-        document_id: created.id,
-        user_id: userId,
-        chunk_index: chunk.chunkIndex,
-        page_number: chunk.page,
-        content: chunk.content,
-      }));
-      for (let i = 0; i < rows.length; i += 100) {
-        const { error } = await supabase.from("document_chunks").insert(rows.slice(i, i + 100));
-        if (error) throw new Error(error.message);
-      }
-
       setUploadState(null);
       queryClient.invalidateQueries({ queryKey: ["documents"] });
       toast.success("SELA is preparing your document.");
 
+      // Server downloads, extracts, chunks, embeds, and analyzes — keeps pdfjs/mammoth off the client graph.
       processDocument({ data: { documentId: created.id } })
         .then(() => queryClient.invalidateQueries({ queryKey: ["documents"] }))
         .catch((error: unknown) => {
@@ -222,9 +204,11 @@ export function Workspace() {
           </Button>
           <input
             ref={inputRef}
+            id="sela-document-upload"
             type="file"
             accept=".pdf,.docx"
             className="hidden"
+            aria-label="Upload a PDF or Word document"
             onChange={(event) => {
               const file = event.target.files?.[0];
               event.target.value = "";
@@ -237,8 +221,10 @@ export function Workspace() {
           <div className="relative mt-8 max-w-sm">
             <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
+              id="sela-document-search"
               type="search"
               placeholder="Search documents…"
+              aria-label="Search documents"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-9"

@@ -15,40 +15,15 @@ import {
   type SelaVersionSection,
   type VisualIntelligence,
 } from "@/lib/sela.functions";
-import { exportExpertMemoPdf } from "@/lib/expert-memo-pdf";
-import { AppShell, Disclaimer } from "@/components/sela/shell";
+import { AppShell } from "@/components/sela/shell";
+import { DocumentAskPanel } from "@/components/sela/document-ask-panel";
+import { DocumentVersionPanel } from "@/components/sela/document-version-panel";
+import { DocumentEvidenceSheet } from "@/components/sela/document-evidence-sheet";
+import { Empty, LANGUAGE_LABELS, VisualDiagramCard } from "@/components/sela/document-shared";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import {
-  ArrowRight,
-  BookOpen,
-  Check,
-  Columns2,
-  Copy,
-  Download,
-  ExternalLink,
-  FileCheck2,
-  FileText,
-  Globe,
-  HelpCircle,
-  Layers,
-  Loader2,
-  Quote,
-  ShieldCheck,
-  Sparkles,
-} from "lucide-react";
+import { BookOpen, Download, HelpCircle, Quote, Sparkles } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/documents/$documentId")({
   beforeLoad: ({ params }) => {
@@ -78,7 +53,8 @@ export const Route = createFileRoute("/_authenticated/documents/$documentId")({
   component: DocumentReview,
 });
 
-type Chunk = { chunk_index: number; page_number: number; content: string };
+type ChunkMeta = { chunk_index: number; page_number: number };
+type Chunk = ChunkMeta & { content: string };
 type QuestionRow = {
   id: string;
   question: string;
@@ -93,14 +69,6 @@ type QuestionRow = {
     sources?: Array<{ title: string; url: string; published_date?: string }>;
   } | null;
   created_at: string;
-};
-
-const LANGUAGE_LABELS: Record<string, string> = {
-  en: "English",
-  te: "తెలుగు (Telugu)",
-  hi: "हिन्दी (Hindi)",
-  ml: "മലയാളം (Malayalam)",
-  kn: "ಕನ್ನಡ (Kannada)",
 };
 
 export function DocumentReview() {
@@ -128,8 +96,10 @@ export function DocumentReview() {
   const [translatedSections, setTranslatedSections] = useState<SelaVersionSection[] | null>(null);
   const [languageCache, setLanguageCache] = useState<Record<string, SelaVersionSection[]>>({});
 
-  // Side-by-side mode toggle for SELA'S VERSION tab
-  const [sideBySide, setSideBySide] = useState(true);
+  // Side-by-side mode toggle for SELA'S VERSION tab (off by default so first paint skips full chunk bodies)
+  const [sideBySide, setSideBySide] = useState(false);
+  const [activeTab, setActiveTab] = useState("sela-version");
+  const [forceFullChunks, setForceFullChunks] = useState(false);
 
   // Copied state
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -153,8 +123,25 @@ export function DocumentReview() {
     },
   });
 
-  const { data: chunks = [] } = useQuery({
-    queryKey: ["chunks", activeDocumentId],
+  const needFullChunks =
+    forceFullChunks || sideBySide || activeTab === "original" || activeTab === "memo";
+
+  const { data: chunkMeta = [] } = useQuery({
+    queryKey: ["chunks-meta", activeDocumentId],
+    queryFn: async (): Promise<ChunkMeta[]> => {
+      const { data, error } = await supabase
+        .from("document_chunks")
+        .select("chunk_index, page_number")
+        .eq("document_id", activeDocumentId)
+        .order("chunk_index", { ascending: true });
+      if (error) throw new Error(error.message);
+      return data ?? [];
+    },
+    enabled: Boolean(activeDocumentId),
+  });
+
+  const { data: fullChunks = [], isFetching: fetchingFullChunks } = useQuery({
+    queryKey: ["chunks-content", activeDocumentId],
     queryFn: async (): Promise<Chunk[]> => {
       const { data, error } = await supabase
         .from("document_chunks")
@@ -164,7 +151,12 @@ export function DocumentReview() {
       if (error) throw new Error(error.message);
       return data ?? [];
     },
+    enabled: Boolean(activeDocumentId) && needFullChunks,
   });
+
+  const chunks: Chunk[] = fullChunks.length
+    ? fullChunks
+    : chunkMeta.map((c) => ({ ...c, content: "" }));
 
   const { data: questions = [] } = useQuery({
     queryKey: ["questions", activeDocumentId],
@@ -223,10 +215,26 @@ export function DocumentReview() {
     };
   }, [doc, overview, chunkMap]);
 
-  const showSource = (chunkIndex: number, fallback?: Citation) => {
+  const showSource = async (chunkIndex: number, fallback?: Citation) => {
     const chunk = chunkMap.get(chunkIndex);
-    if (chunk) setOpenSource({ page: chunk.page_number, text: chunk.content });
-    else if (fallback) setOpenSource({ page: fallback.page, text: fallback.excerpt });
+    if (chunk?.content) {
+      setOpenSource({ page: chunk.page_number, text: chunk.content });
+      return;
+    }
+    if (fallback?.excerpt) {
+      setOpenSource({ page: fallback.page, text: fallback.excerpt });
+    }
+    const { data, error } = await supabase
+      .from("document_chunks")
+      .select("chunk_index, page_number, content")
+      .eq("document_id", activeDocumentId)
+      .eq("chunk_index", chunkIndex)
+      .maybeSingle();
+    if (!error && data?.content) {
+      setOpenSource({ page: data.page_number, text: data.content });
+      return;
+    }
+    if (fallback) setOpenSource({ page: fallback.page, text: fallback.excerpt });
   };
 
   const SourceChip = ({ chunkIndex, label }: { chunkIndex: number; label?: string }) => {
@@ -235,7 +243,7 @@ export function DocumentReview() {
       <button
         type="button"
         className="source-mark inline-flex items-center gap-1.5 rounded bg-muted/80 px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-        onClick={() => showSource(chunkIndex)}
+        onClick={() => void showSource(chunkIndex)}
       >
         <Quote className="size-3 text-brass" />
         {label ?? `Source · page ${chunk?.page_number ?? "—"}`}
@@ -351,6 +359,42 @@ export function DocumentReview() {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  const runExpertMemoExport = async (opts: {
+    documentTitle: string;
+    fileName: string;
+    pageCount?: number | null;
+    overview: DocumentOverview | null;
+    keyTerms: KeyTerm[];
+    clauses: ClauseFinding[];
+    issues: IssueFinding[];
+    selaVersion: SelaVersion;
+    questions: QuestionRow[];
+  }) => {
+    setForceFullChunks(true);
+    let passages = fullChunks;
+    if (passages.length === 0) {
+      const { data, error } = await supabase
+        .from("document_chunks")
+        .select("chunk_index, page_number, content")
+        .eq("document_id", activeDocumentId)
+        .order("chunk_index", { ascending: true });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      passages = data ?? [];
+    }
+    const { exportExpertMemoPdf } = await import("@/lib/expert-memo-pdf");
+    exportExpertMemoPdf({
+      ...opts,
+      originalPassages: passages.map((c) => ({
+        chunkIndex: c.chunk_index,
+        page: c.page_number,
+        content: c.content,
+      })),
+    });
+  };
+
   if (!documentId || isLoading || !doc) {
     return (
       <AppShell>
@@ -398,7 +442,7 @@ export function DocumentReview() {
               variant="outline"
               size="sm"
               onClick={() =>
-                exportExpertMemoPdf({
+                void runExpertMemoExport({
                   documentTitle: doc.title,
                   fileName: doc.file_name,
                   pageCount: doc.page_count,
@@ -408,11 +452,6 @@ export function DocumentReview() {
                   issues,
                   selaVersion,
                   questions,
-                  originalPassages: chunks.map((c) => ({
-                    chunkIndex: c.chunk_index,
-                    page: c.page_number,
-                    content: c.content,
-                  })),
                 })
               }
               className="flex items-center gap-2 border-brass/50 text-foreground hover:bg-brass/10"
@@ -423,7 +462,11 @@ export function DocumentReview() {
         </div>
 
         {/* Main Tabbed Review Experience */}
-        <Tabs defaultValue="sela-version" className="mt-8">
+        <Tabs
+          defaultValue="sela-version"
+          className="mt-8"
+          onValueChange={(value) => setActiveTab(value)}
+        >
           <TabsList className="flex-wrap bg-muted/60 p-1">
             <TabsTrigger value="sela-version" className="gap-1.5">
               <Sparkles className="size-3.5 text-brass" /> SELA'S VERSION
@@ -442,186 +485,20 @@ export function DocumentReview() {
             <TabsTrigger value="memo">Expert Memo</TabsTrigger>
           </TabsList>
 
-          {/* TAB 1: SELA'S VERSION + ORIGINAL ↔ SELA'S VERSION SIDE-BY-SIDE */}
-          <TabsContent value="sela-version" className="mt-7 space-y-6">
-            {/* Top Bar: Language Selector & Notice */}
-            <div className="flex flex-wrap items-center justify-between gap-4 rounded-md border border-border bg-card p-4">
-              <div className="flex items-center gap-3">
-                <Globe className="size-4 text-brass" />
-                <Label
-                  htmlFor="sela-lang"
-                  className="text-xs font-semibold uppercase tracking-wider"
-                >
-                  Language
-                </Label>
-                <Select
-                  value={selaLanguage}
-                  onValueChange={(val) =>
-                    handleLanguageChange(val as "en" | "te" | "hi" | "ml" | "kn")
-                  }
-                  disabled={translatingLanguage}
-                >
-                  <SelectTrigger id="sela-lang" className="h-8 w-44 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Object.entries(LANGUAGE_LABELS).map(([code, label]) => (
-                      <SelectItem key={code} value={code} className="text-xs">
-                        {label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {translatingLanguage && <Loader2 className="size-4 animate-spin text-brass" />}
-              </div>
-
-              <div className="flex items-center gap-4">
-                <button
-                  type="button"
-                  onClick={() => setSideBySide(!sideBySide)}
-                  className={`hidden items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium md:inline-flex ${
-                    sideBySide
-                      ? "bg-brass/20 text-brass-dark dark:text-brass"
-                      : "bg-muted text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  <Columns2 className="size-3.5" />
-                  {sideBySide ? "Side-by-side view: ON" : "Side-by-side view: OFF"}
-                </button>
-              </div>
-            </div>
-
-            {/* Authoritative Text Notice */}
-            <p className="text-xs italic text-muted-foreground">
-              SELA'S VERSION is generated for understanding and review. The original document
-              remains the authoritative text.
-            </p>
-
-            {/* Split View / Side-by-Side */}
-            <div className={`grid gap-6 ${sideBySide ? "lg:grid-cols-2" : "grid-cols-1"}`}>
-              {/* LEFT COLUMN: ORIGINAL DOCUMENT (when side-by-side active) */}
-              {sideBySide && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between border-b border-border pb-2">
-                    <h2 className="font-display text-lg">Original document</h2>
-                    <span className="text-xs uppercase tracking-wider text-muted-foreground">
-                      Authoritative text
-                    </span>
-                  </div>
-
-                  <div className="max-h-[750px] space-y-3 overflow-y-auto pr-2">
-                    {chunks.map((chunk) => (
-                      <div
-                        key={chunk.chunk_index}
-                        className="paper-panel relative border border-border/80 p-4 transition-colors hover:border-brass/40"
-                      >
-                        <div className="flex items-center justify-between text-xs text-muted-foreground">
-                          <span className="font-medium text-brass">
-                            Passage {chunk.chunk_index} · Page {chunk.page_number}
-                          </span>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 gap-1 text-xs text-brass hover:text-brass"
-                            onClick={() => handleExplain(chunk.chunk_index, chunk.content)}
-                          >
-                            <Sparkles className="size-3" /> Explain with SELA
-                          </Button>
-                        </div>
-                        <p className="mt-2 whitespace-pre-wrap font-mono text-xs leading-relaxed text-foreground/90">
-                          {chunk.content}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* RIGHT COLUMN: SELA'S VERSION (Structured breakdowns & visual intelligence) */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between border-b border-border pb-2">
-                  <h2 className="font-display text-lg">SELA'S VERSION</h2>
-                  <span className="text-xs uppercase tracking-wider text-brass">
-                    Faithful structured breakdown
-                  </span>
-                </div>
-
-                <div className="max-h-[750px] space-y-4 overflow-y-auto pr-2">
-                  {activeSections.length === 0 && (
-                    <Empty text="SELA'S VERSION is being prepared for this document." />
-                  )}
-
-                  {activeSections.map((sec, idx) => (
-                    <div key={`${sec.section_title}-${idx}`} className="paper-panel space-y-3 p-5">
-                      <div className="flex items-start justify-between gap-2 border-b border-border/60 pb-2">
-                        <h3 className="font-display text-xl leading-snug">{sec.section_title}</h3>
-                        <button
-                          type="button"
-                          className="source-mark shrink-0 rounded bg-brass/10 px-2 py-0.5 text-xs text-brass hover:bg-brass/20"
-                          onClick={() => showSource(sec.chunk_index)}
-                        >
-                          <Quote className="mr-1 inline size-3" />
-                          Page {sec.page_number} · View source
-                        </button>
-                      </div>
-
-                      {/* WHAT IT SAYS */}
-                      <div>
-                        <p className="text-[0.68rem] font-bold uppercase tracking-[0.16em] text-brass">
-                          WHAT IT SAYS
-                        </p>
-                        <p className="mt-1 text-sm leading-relaxed text-foreground/90">
-                          {sec.what_it_says}
-                        </p>
-                      </div>
-
-                      {/* WHY IT MATTERS */}
-                      {sec.why_it_matters && (
-                        <div>
-                          <p className="text-[0.68rem] font-bold uppercase tracking-[0.16em] text-muted-foreground">
-                            WHY IT MATTERS
-                          </p>
-                          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                            {sec.why_it_matters}
-                          </p>
-                        </div>
-                      )}
-
-                      {/* WHO IT AFFECTS & WHAT HAPPENS */}
-                      {(sec.who_it_affects || sec.what_happens) && (
-                        <div className="grid gap-3 pt-1 sm:grid-cols-2">
-                          {sec.who_it_affects && (
-                            <div className="rounded bg-muted/40 p-2.5 text-xs">
-                              <span className="font-semibold text-foreground">
-                                WHO IT AFFECTS:{" "}
-                              </span>
-                              <span className="text-muted-foreground">{sec.who_it_affects}</span>
-                            </div>
-                          )}
-                          {sec.what_happens && (
-                            <div className="rounded bg-muted/40 p-2.5 text-xs">
-                              <span className="font-semibold text-foreground">WHAT HAPPENS: </span>
-                              <span className="text-muted-foreground">{sec.what_happens}</span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* IMPORTANT DATES */}
-                      {sec.important_dates && (
-                        <div className="rounded border border-border/80 bg-background/50 p-2 text-xs">
-                          <span className="font-semibold text-brass">IMPORTANT DATES: </span>
-                          <span className="text-foreground">{sec.important_dates}</span>
-                        </div>
-                      )}
-
-                      {/* GROUNDED VISUAL INTELLIGENCE */}
-                      {sec.visual && <VisualDiagramCard visual={sec.visual} />}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
+          {/* TAB 1: SELA'S VERSION */}
+          <TabsContent value="sela-version" className="mt-0">
+            <DocumentVersionPanel
+              selaLanguage={selaLanguage}
+              translatingLanguage={translatingLanguage}
+              handleLanguageChange={handleLanguageChange}
+              sideBySide={sideBySide}
+              setSideBySide={setSideBySide}
+              activeSections={activeSections}
+              chunks={chunks}
+              fetchingFullChunks={fetchingFullChunks}
+              handleExplain={handleExplain}
+              showSource={(idx) => void showSource(idx)}
+            />
           </TabsContent>
 
           {/* TAB 2: OVERVIEW */}
@@ -689,11 +566,14 @@ export function DocumentReview() {
             <div className="flex items-center justify-between">
               <h2 className="font-display text-2xl">Original document text</h2>
               <span className="text-xs text-muted-foreground">
-                {chunks.length} extracted passages
+                {chunkMeta.length || chunks.length} extracted passages
               </span>
             </div>
 
             <div className="space-y-3">
+              {fetchingFullChunks && chunks.every((c) => !c.content) && (
+                <p className="text-sm text-muted-foreground">Loading original passages…</p>
+              )}
               {chunks.map((chunk) => (
                 <div key={chunk.chunk_index} className="paper-panel p-5">
                   <div className="flex items-center justify-between text-xs text-muted-foreground border-b border-border/60 pb-2">
@@ -704,290 +584,34 @@ export function DocumentReview() {
                       variant="outline"
                       size="sm"
                       className="h-7 gap-1 text-xs"
-                      onClick={() => handleExplain(chunk.chunk_index, chunk.content)}
+                      onClick={() => handleExplain(chunk.chunk_index, chunk.content || undefined)}
                     >
                       <Sparkles className="size-3 text-brass" /> Explain with SELA
                     </Button>
                   </div>
                   <p className="mt-3 whitespace-pre-wrap font-mono text-xs leading-relaxed text-foreground/90">
-                    {chunk.content}
+                    {chunk.content || "…"}
                   </p>
                 </div>
               ))}
             </div>
           </TabsContent>
 
-          {/* TAB 4: ASK SELA (Grounded RAG + External Verification + Follow-ups) */}
-          <TabsContent value="ask" className="mt-7 space-y-6">
-            <div className="paper-panel p-6">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
-                <div>
-                  <h2 className="font-display text-xl">Ask SELA</h2>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Ask questions grounded strictly in your document, or search external public
-                    legal sources.
-                  </p>
-                </div>
-                {/* Research Scope Selector */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[0.68rem] font-bold uppercase tracking-wider text-muted-foreground mr-1">
-                    SCOPE:
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSearchMode("document");
-                      setVerifyExternal(false);
-                    }}
-                    className={`rounded-full px-3 py-1 text-xs font-medium transition-all ${
-                      searchMode === "document"
-                        ? "bg-brass text-white shadow-sm"
-                        : "bg-muted/60 text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    ✓ Document only
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSearchMode("both");
-                      setVerifyExternal(true);
-                    }}
-                    className={`rounded-full px-3 py-1 text-xs font-medium transition-all ${
-                      searchMode === "both"
-                        ? "bg-brass text-white shadow-sm"
-                        : "bg-muted/60 text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    🌐 Document + External Sources
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSearchMode("external");
-                      setVerifyExternal(true);
-                    }}
-                    className={`rounded-full px-3 py-1 text-xs font-medium transition-all ${
-                      searchMode === "external"
-                        ? "bg-brass text-white shadow-sm"
-                        : "bg-muted/60 text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    🏛️ External Sources Only
-                  </button>
-                </div>
-              </div>
-
-              <Textarea
-                className="mt-4"
-                rows={3}
-                placeholder={
-                  searchMode === "external"
-                    ? "Ask a general legal or statutory question (e.g. What is the statutory notice period for IT employment in India?)"
-                    : searchMode === "both"
-                      ? "Ask a question comparing this document with legal statutes (e.g. Does current employment law require anything beyond this notice clause?)"
-                      : "Ask about this document (e.g. Can the employer terminate this agreement immediately without notice?)"
-                }
-                value={question}
-                onChange={(event) => setQuestion(event.target.value)}
-              />
-
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-4 border-t border-border pt-4">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">
-                    {searchMode === "document"
-                      ? "Searching uploaded document passages only."
-                      : searchMode === "both"
-                        ? "Checking document evidence + live authoritative public web sources."
-                        : "Researching authoritative public legal statutes & official gazettes."}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <Disclaimer className="hidden max-w-sm lg:block" />
-                  <Button
-                    onClick={() => void ask()}
-                    disabled={asking || question.trim().length < 3}
-                  >
-                    {asking ? (
-                      <>
-                        <Loader2 className="size-4 animate-spin" /> Analyzing
-                      </>
-                    ) : (
-                      "Ask SELA"
-                    )}
-                  </Button>
-                </div>
-              </div>
-            </div>
-
-            {/* Q&A Inquiries Stream */}
-            {questions.length === 0 && <Empty text="No questions asked yet." />}
-            {questions.map((entry) => {
-              const hasDocLayer =
-                (entry.citations && entry.citations.length > 0) ||
-                (entry.answer && !entry.external_verification);
-              const hasExtLayer = Boolean(
-                entry.external_verification && entry.external_verification.status !== "UNAVAILABLE",
-              );
-
-              return (
-                <div key={entry.id} className="paper-panel space-y-4 p-6">
-                  {/* Header */}
-                  <div className="flex items-start justify-between gap-4">
-                    <p className="font-display text-xl">{entry.question}</p>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 px-2 text-muted-foreground hover:text-foreground"
-                      onClick={() => copyText(entry.answer, entry.id)}
-                      title="Copy answer"
-                    >
-                      {copiedId === entry.id ? (
-                        <Check className="size-3.5 text-green-500" />
-                      ) : (
-                        <Copy className="size-3.5" />
-                      )}
-                    </Button>
-                  </div>
-
-                  <div className="rule-line" />
-
-                  {/* LAYER 1: FROM YOUR DOCUMENT */}
-                  {hasDocLayer && (
-                    <div className="rounded-md border border-border/80 bg-background/50 p-4 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <p className="text-[0.68rem] font-bold uppercase tracking-[0.18em] text-brass">
-                          LAYER 1 · FROM YOUR DOCUMENT
-                        </p>
-                        <span className="text-[0.65rem] text-muted-foreground uppercase tracking-wider font-semibold">
-                          Authoritative Text Evidence
-                        </span>
-                      </div>
-                      <p className="text-sm leading-relaxed text-foreground/90">{entry.answer}</p>
-
-                      {entry.sufficient === false && (
-                        <div className="flex flex-wrap items-center justify-between gap-2 rounded bg-amber-500/10 p-2.5 text-xs text-amber-900 dark:text-amber-200">
-                          <span>SELA could not fully support this from the document alone.</span>
-                          <button
-                            type="button"
-                            className="inline-flex items-center gap-1 font-semibold text-brass hover:underline"
-                            onClick={() => void ask(entry.question, "external")}
-                          >
-                            <ExternalLink className="size-3" /> Search external legal sources for
-                            this
-                          </button>
-                        </div>
-                      )}
-
-                      {entry.citations && entry.citations.length > 0 && (
-                        <div className="flex flex-wrap gap-2 pt-1">
-                          {entry.citations.map((citation) => (
-                            <button
-                              key={`${entry.id}-${citation.chunkIndex}`}
-                              type="button"
-                              className="source-mark"
-                              onClick={() => showSource(citation.chunkIndex, citation)}
-                            >
-                              <Quote className="size-3 text-brass" /> Source · page {citation.page}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* LAYER 2: FROM EXTERNAL SOURCES */}
-                  {hasExtLayer && entry.external_verification && (
-                    <div className="rounded-md border border-brass/30 bg-muted/30 p-4 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <p className="text-[0.68rem] font-bold uppercase tracking-[0.18em] text-brass">
-                          LAYER 2 · FROM EXTERNAL SOURCES
-                        </p>
-                        <span
-                          className={`rounded px-2 py-0.5 text-[0.65rem] font-bold uppercase ${
-                            entry.external_verification.status === "CONSISTENT"
-                              ? "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300"
-                              : entry.external_verification.status === "DIFFERS"
-                                ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-                                : "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300"
-                          }`}
-                        >
-                          {entry.external_verification.status}
-                        </span>
-                      </div>
-
-                      <p className="text-xs leading-relaxed text-foreground/90">
-                        {entry.external_verification.summary}
-                      </p>
-
-                      {/* HOW THEY RELATE (When both layers exist) */}
-                      {entry.external_verification.how_they_relate && (
-                        <div className="rounded bg-background/60 p-2.5 text-xs border border-border/60">
-                          <p className="text-[0.65rem] font-bold uppercase tracking-wider text-muted-foreground">
-                            HOW THEY RELATE · COMPARISON
-                          </p>
-                          <p className="mt-1 text-muted-foreground leading-relaxed">
-                            {entry.external_verification.how_they_relate}
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Clickable External Sources */}
-                      {entry.external_verification.sources &&
-                        entry.external_verification.sources.length > 0 && (
-                          <div className="pt-1">
-                            <p className="text-[0.65rem] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">
-                              Retrieved Public Sources:
-                            </p>
-                            <div className="flex flex-wrap gap-2">
-                              {entry.external_verification.sources.map((s, idx) => (
-                                <a
-                                  key={idx}
-                                  href={s.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 rounded bg-background px-2.5 py-1 text-[0.7rem] text-foreground underline hover:text-brass transition-colors shadow-sm"
-                                >
-                                  <ExternalLink className="size-3 text-brass" /> {s.title}
-                                </a>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                    </div>
-                  )}
-
-                  {/* External Check Unavailable state */}
-                  {entry.external_verification?.status === "UNAVAILABLE" && (
-                    <div className="rounded bg-muted/40 p-2.5 text-xs text-muted-foreground italic">
-                      SELA couldn't complete the external source check right now.
-                    </div>
-                  )}
-
-                  {/* USEFUL GROUNDED FOLLOW-UP QUESTIONS */}
-                  {entry.follow_ups && entry.follow_ups.length > 0 && (
-                    <div className="pt-2">
-                      <p className="text-xs font-medium text-muted-foreground">
-                        Grounded follow-up questions:
-                      </p>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {entry.follow_ups.map((fu, fIdx) => (
-                          <button
-                            key={fIdx}
-                            type="button"
-                            className="rounded-full border border-border bg-card px-3 py-1 text-xs text-foreground transition-colors hover:border-brass/50 hover:bg-brass/5"
-                            onClick={() => void ask(fu)}
-                          >
-                            {fu} →
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+          {/* TAB 4: ASK SELA */}
+          <TabsContent value="ask" className="mt-0">
+            <DocumentAskPanel
+              question={question}
+              setQuestion={setQuestion}
+              searchMode={searchMode}
+              setSearchMode={setSearchMode}
+              setVerifyExternal={setVerifyExternal}
+              asking={asking}
+              ask={(q, m) => void ask(q, m)}
+              questions={questions}
+              copiedId={copiedId}
+              copyText={copyText}
+              showSource={(idx, fb) => void showSource(idx, fb)}
+            />
           </TabsContent>
 
           {/* TAB 5: KEY TERMS */}
@@ -1079,7 +703,7 @@ export function DocumentReview() {
                 </div>
                 <Button
                   onClick={() =>
-                    exportExpertMemoPdf({
+                    void runExpertMemoExport({
                       documentTitle: doc.title,
                       fileName: doc.file_name,
                       pageCount: doc.page_count,
@@ -1092,11 +716,6 @@ export function DocumentReview() {
                         sections: activeSections,
                       },
                       questions,
-                      originalPassages: chunks.map((c) => ({
-                        chunkIndex: c.chunk_index,
-                        page: c.page_number,
-                        content: c.content,
-                      })),
                     })
                   }
                   className="gap-2"
@@ -1155,123 +774,16 @@ export function DocumentReview() {
         </Tabs>
       </div>
 
-      {/* SOURCE DRAWER (Sheet) */}
-      <Sheet open={Boolean(openSource)} onOpenChange={(open) => !open && setOpenSource(null)}>
-        <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
-          <SheetHeader>
-            <SheetTitle className="font-display text-2xl">
-              Source passage · Page {openSource?.page}
-            </SheetTitle>
-          </SheetHeader>
-          <div className="px-4 pb-8 pt-4">
-            <p className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-foreground/90">
-              {openSource?.text}
-            </p>
-          </div>
-        </SheetContent>
-      </Sheet>
-
-      {/* EXPLAIN WITH SELA DRAWER */}
-      <Sheet open={openExplainDrawer} onOpenChange={setOpenExplainDrawer}>
-        <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
-          <SheetHeader>
-            <SheetTitle className="font-display text-2xl">Explain with SELA</SheetTitle>
-          </SheetHeader>
-          <div className="px-4 pb-8 pt-4 space-y-4">
-            {explaining && (
-              <div className="flex items-center gap-3 py-12 text-sm text-muted-foreground justify-center">
-                <Loader2 className="size-5 animate-spin text-brass" /> SELA is generating a grounded
-                explanation…
-              </div>
-            )}
-
-            {!explaining && explainResult && (
-              <div className="space-y-4 text-sm">
-                <div className="border-b border-border pb-2">
-                  <h3 className="font-display text-xl">{explainResult.section_title}</h3>
-                  <p className="text-xs text-brass">
-                    Page {explainResult.page_number} · Passage {explainResult.chunk_index}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-[0.68rem] font-bold uppercase tracking-wider text-brass">
-                    WHAT IT SAYS
-                  </p>
-                  <p className="mt-1 text-sm text-foreground/90">{explainResult.what_it_says}</p>
-                </div>
-
-                {explainResult.why_it_matters && (
-                  <div>
-                    <p className="text-[0.68rem] font-bold uppercase tracking-wider text-muted-foreground">
-                      WHY IT MATTERS
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {explainResult.why_it_matters}
-                    </p>
-                  </div>
-                )}
-
-                {explainResult.who_it_affects && (
-                  <div>
-                    <p className="text-[0.68rem] font-bold uppercase tracking-wider text-muted-foreground">
-                      WHO IT AFFECTS
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {explainResult.who_it_affects}
-                    </p>
-                  </div>
-                )}
-
-                {explainResult.what_happens && (
-                  <div>
-                    <p className="text-[0.68rem] font-bold uppercase tracking-wider text-muted-foreground">
-                      WHAT HAPPENS
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {explainResult.what_happens}
-                    </p>
-                  </div>
-                )}
-
-                {explainResult.visual && <VisualDiagramCard visual={explainResult.visual} />}
-              </div>
-            )}
-          </div>
-        </SheetContent>
-      </Sheet>
+      <DocumentEvidenceSheet
+        openSource={openSource}
+        onOpenSourceChange={(open) => {
+          if (!open) setOpenSource(null);
+        }}
+        openExplainDrawer={openExplainDrawer}
+        onOpenExplainChange={setOpenExplainDrawer}
+        explaining={explaining}
+        explainResult={explainResult}
+      />
     </AppShell>
   );
-}
-
-// ----------------------------------------------------
-// Visual Diagram Renderer Component
-// ----------------------------------------------------
-function VisualDiagramCard({ visual }: { visual: VisualIntelligence }) {
-  return (
-    <div className="rounded-md border border-border/70 bg-card/60 p-3.5 space-y-2">
-      <div className="flex items-center gap-1.5 text-xs font-semibold text-brass">
-        <Layers className="size-3.5" />
-        <span className="uppercase tracking-wider">Visual: {visual.title}</span>
-      </div>
-
-      <div className="mt-2 space-y-2">
-        {visual.items.map((item, idx) => (
-          <div key={idx} className="flex items-start gap-2.5 text-xs">
-            <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-brass/20 text-[0.65rem] font-bold text-brass">
-              {item.step ?? idx + 1}
-            </span>
-            <div>
-              <span className="font-semibold text-foreground">{item.label}</span>
-              {item.detail && <p className="text-muted-foreground">{item.detail}</p>}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function Empty({ text }: { text: string }) {
-  return <p className="paper-panel p-6 text-sm text-muted-foreground">{text}</p>;
 }

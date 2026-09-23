@@ -682,3 +682,98 @@ STRICT INTEGRITY RULES:
 
   return result.translated_sections || [];
 }
+
+/**
+ * Single-roundtrip translation of all present explanatory fields (Explain with SELA).
+ * Mirrors translateSelaVersionBatch for one structured section.
+ */
+export type ExplanatoryFields = {
+  section_title?: string;
+  what_it_says: string;
+  why_it_matters?: string;
+  who_it_affects?: string;
+  what_happens?: string;
+  important_dates?: string;
+};
+
+export async function translateExplanatoryFieldsBatch({
+  fields,
+  targetLanguage,
+}: {
+  fields: ExplanatoryFields;
+  targetLanguage: "en" | "te" | "hi" | "ml" | "kn";
+}): Promise<ExplanatoryFields> {
+  if (targetLanguage === "en") return fields;
+
+  const langNames: Record<string, string> = {
+    te: "Telugu",
+    hi: "Hindi",
+    ml: "Malayalam",
+    kn: "Kannada",
+  };
+  const targetName = langNames[targetLanguage] || targetLanguage;
+
+  const instructions = `You are a professional legal language translator for SELA.
+Translate the provided explanatory legal analysis fields into ${targetName}.
+
+STRICT INTEGRITY RULES:
+1. Translate the explanatory sentences and guidance into natural, clear ${targetName}.
+2. DO NOT translate, modify, or convert:
+   - Dates (keep in original numbers e.g. 15 March 2026, 30 days)
+   - Currency and monetary amounts (e.g. $50,000, Rs. 1,00,000)
+   - Company names, entity names, and party names
+   - Section numbers, clause numbers, and law citations
+   - Verbatim quotations from original text
+3. Keep all numbers in standard Arabic numerals.
+4. Return only the fields that were provided in the input. Preserve field names exactly.`;
+
+  const payload: Record<string, string> = {
+    what_it_says: fields.what_it_says,
+  };
+  if (fields.section_title) payload["section_title"] = fields.section_title;
+  if (fields.why_it_matters) payload["why_it_matters"] = fields.why_it_matters;
+  if (fields.who_it_affects) payload["who_it_affects"] = fields.who_it_affects;
+  if (fields.what_happens) payload["what_happens"] = fields.what_happens;
+  if (fields.important_dates) payload["important_dates"] = fields.important_dates;
+
+  const schemaProperties: Record<string, { type: string }> = {
+    what_it_says: { type: "string" },
+  };
+  const required = ["what_it_says"];
+  for (const key of Object.keys(payload)) {
+    if (key === "what_it_says") continue;
+    schemaProperties[key] = { type: "string" };
+  }
+
+  const result = await generateStructured<ExplanatoryFields>({
+    instructions,
+    input: JSON.stringify(payload),
+    schemaName: "explanatory_fields_translation",
+    schema: {
+      type: "object",
+      properties: schemaProperties,
+      required,
+    },
+    effort: "low",
+    maxTokens: 2048,
+  });
+
+  return {
+    what_it_says: result.what_it_says || fields.what_it_says,
+    ...(result.section_title || fields.section_title
+      ? { section_title: result.section_title || fields.section_title }
+      : {}),
+    ...(result.why_it_matters || fields.why_it_matters
+      ? { why_it_matters: result.why_it_matters || fields.why_it_matters }
+      : {}),
+    ...(result.who_it_affects || fields.who_it_affects
+      ? { who_it_affects: result.who_it_affects || fields.who_it_affects }
+      : {}),
+    ...(result.what_happens || fields.what_happens
+      ? { what_happens: result.what_happens || fields.what_happens }
+      : {}),
+    ...(result.important_dates || fields.important_dates
+      ? { important_dates: result.important_dates || fields.important_dates }
+      : {}),
+  };
+}

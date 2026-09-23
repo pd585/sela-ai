@@ -249,26 +249,88 @@ Rules:
 3. Citations ("citations"): List the exact Passage IDs (integers, e.g. [0, 4]) of every passage you directly referenced or relied on. Every factual claim MUST cite at least one Passage ID from the provided passages. Never return an empty citations array if you extracted answers from the passages.
 4. Follow-up Questions ("follow_ups"): Generate 2 to 4 genuinely useful, specific follow-up questions directly related to this question and document to help the user investigate further. Never generate generic conversational filler.`;
 
-function buildContext(
+/** Normalize whitespace for near-duplicate passage detection. */
+export function normalizePassageText(text: string): string {
+  return text.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function tokenSet(text: string): Set<string> {
+  return new Set(text.split(" ").filter(Boolean));
+}
+
+/** Jaccard similarity over whitespace-normalized tokens. */
+export function passageJaccard(a: string, b: string): number {
+  const sa = tokenSet(a);
+  const sb = tokenSet(b);
+  if (sa.size === 0 && sb.size === 0) return 1;
+  let inter = 0;
+  for (const w of sa) if (sb.has(w)) inter += 1;
+  return inter / (sa.size + sb.size - inter);
+}
+
+function isNearDuplicate(candidate: string, kept: string[]): boolean {
+  for (const prev of kept) {
+    if (prev === candidate) return true;
+    if (prev.includes(candidate) || candidate.includes(prev)) {
+      const shorter = Math.min(prev.length, candidate.length);
+      const longer = Math.max(prev.length, candidate.length);
+      if (longer > 0 && shorter / longer >= 0.85) return true;
+    }
+    if (passageJaccard(prev, candidate) >= 0.9) return true;
+  }
+  return false;
+}
+
+/**
+ * Build numbered passage context for the model.
+ * Prefer higher-ranked matches (caller order), skip near-duplicates, respect char budget.
+ */
+export function buildContext(
   chunks: Array<{ chunk_index: number; page_number: number; content: string }>,
   charBudget: number,
 ) {
   let used = 0;
   const parts: string[] = [];
+  const keptNormalized: string[] = [];
   for (const chunk of chunks) {
+    const normalized = normalizePassageText(chunk.content);
+    if (!normalized) continue;
+    if (isNearDuplicate(normalized, keptNormalized)) continue;
     const block = `[Passage ID: ${chunk.chunk_index} | Page ${chunk.page_number}]\n${chunk.content}`;
     if (used + block.length > charBudget) break;
     parts.push(block);
+    keptNormalized.push(normalized);
     used += block.length;
   }
   return parts.join("\n\n");
 }
+
+/** Resolve Ask research mode from client flags. */
+export function resolveAskSearchMode(input: {
+  verifyExternal?: boolean | undefined;
+  searchMode?: "document" | "both" | "external" | undefined;
+}): "document" | "both" | "external" {
+  if (input.searchMode === "external") return "external";
+  if (input.verifyExternal || input.searchMode === "both") return "both";
+  return "document";
+}
+
+/** External research runs only for both/external scopes — never document-only. */
+export function askNeedsExternalResearch(mode: "document" | "both" | "external"): boolean {
+  return mode === "both" || mode === "external";
+}
+
+export const ASK_CONTEXT_CHAR_BUDGET = 45000;
+export const PROCESS_CONTEXT_CHAR_BUDGET = 70000;
 
 export const processDocument = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input: unknown) => ProcessInput.parse(input))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
+    const { assertRateLimit } = await import("./rate-limit");
+    assertRateLimit(userId, "process");
+
     const { embedTexts, generateStructured } = await import("./ai.server");
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
@@ -289,33 +351,106 @@ export const processDocument = createServerFn({ method: "POST" })
     };
 
     try {
-      const { data: chunks, error: chunkError } = await supabase
+      const initialChunks = await supabase
         .from("document_chunks")
-        .select("id, chunk_index, page_number, content")
+        .select("id, chunk_index, page_number, content, embedding")
         .eq("document_id", data.documentId)
         .order("chunk_index", { ascending: true });
-      if (chunkError) throw new Error(chunkError.message);
-      if (!chunks || chunks.length === 0)
+      if (initialChunks.error) throw new Error(initialChunks.error.message);
+      let chunks = initialChunks.data;
+
+      // Server-owned extract path: if no chunks yet, download original and extract.
+      if (!chunks || chunks.length === 0) {
+        const { data: fullDoc, error: fullErr } = await supabase
+          .from("documents")
+          .select("storage_path, file_name, mime_type")
+          .eq("id", data.documentId)
+          .eq("user_id", userId)
+          .single();
+        if (fullErr || !fullDoc?.storage_path) {
+          throw new Error("No readable text was found in this document.");
+        }
+
+        await dbClient
+          .from("documents")
+          .update({ status: "preparing", status_detail: "Extracting text from the document" })
+          .eq("id", data.documentId);
+
+        const { data: fileBlob, error: downloadError } = await dbClient.storage
+          .from("documents")
+          .download(fullDoc.storage_path);
+        if (downloadError || !fileBlob) {
+          throw new Error(downloadError?.message ?? "Could not download the uploaded document.");
+        }
+
+        const buffer = await fileBlob.arrayBuffer();
+        const { extractAndChunkFromBuffer } = await import("./extract-text.server");
+        const { extracted, chunks: built } = await extractAndChunkFromBuffer({
+          buffer,
+          fileName: fullDoc.file_name,
+          mimeType: fullDoc.mime_type,
+        });
+        if (built.length === 0) {
+          throw new Error("No selectable text was found — SELA cannot read scanned images yet.");
+        }
+
+        const rows = built.map((chunk) => ({
+          document_id: data.documentId,
+          user_id: userId,
+          chunk_index: chunk.chunkIndex,
+          page_number: chunk.page,
+          content: chunk.content,
+        }));
+        for (let i = 0; i < rows.length; i += 100) {
+          const { error } = await dbClient.from("document_chunks").insert(rows.slice(i, i + 100));
+          if (error) throw new Error(error.message);
+        }
+
+        await dbClient
+          .from("documents")
+          .update({
+            page_count: extracted.pageCount,
+            status_detail: "Reading the document",
+          })
+          .eq("id", data.documentId);
+
+        const reloaded = await supabase
+          .from("document_chunks")
+          .select("id, chunk_index, page_number, content, embedding")
+          .eq("document_id", data.documentId)
+          .order("chunk_index", { ascending: true });
+        if (reloaded.error) throw new Error(reloaded.error.message);
+        chunks = reloaded.data;
+      }
+
+      if (!chunks || chunks.length === 0) {
         throw new Error("No readable text was found in this document.");
+      }
 
       await dbClient
         .from("documents")
         .update({ status: "preparing", status_detail: "Reading the document" })
         .eq("id", data.documentId);
 
-      const embeddings = await embedTexts(chunks.map((c) => c.content));
-      const rows = chunks.map((chunk, index) => ({
-        id: chunk.id,
-        document_id: data.documentId,
-        user_id: userId,
-        chunk_index: chunk.chunk_index,
-        page_number: chunk.page_number,
-        content: chunk.content,
-        embedding: JSON.stringify(embeddings[index]),
-      }));
-      for (let i = 0; i < rows.length; i += 40) {
-        const { error } = await dbClient.from("document_chunks").upsert(rows.slice(i, i + 40));
-        if (error) throw new Error(error.message);
+      const allEmbedded = chunks.every(
+        (c) => typeof c.embedding === "string" && c.embedding.length > 2,
+      );
+
+      if (!allEmbedded) {
+        const embeddings = await embedTexts(chunks.map((c) => c.content));
+        const rows = chunks.map((chunk, index) => ({
+          id: chunk.id,
+          document_id: data.documentId,
+          user_id: userId,
+          chunk_index: chunk.chunk_index,
+          page_number: chunk.page_number,
+          content: chunk.content,
+          embedding: JSON.stringify(embeddings[index]),
+        }));
+        for (let i = 0; i < rows.length; i += 40) {
+          const { error } = await dbClient.from("document_chunks").upsert(rows.slice(i, i + 40));
+          if (error) throw new Error(error.message);
+        }
       }
 
       await dbClient
@@ -325,7 +460,7 @@ export const processDocument = createServerFn({ method: "POST" })
 
       const analysis = await generateStructured<Analysis>({
         instructions: ANALYSIS_INSTRUCTIONS,
-        input: `Document title: ${doc.title}\n\n${buildContext(chunks, 90000)}`,
+        input: `Document title: ${doc.title}\n\n${buildContext(chunks, PROCESS_CONTEXT_CHAR_BUDGET)}`,
         schemaName: "document_analysis",
         schema: analysisSchema,
         effort: "medium",
@@ -366,17 +501,18 @@ export const askDocument = createServerFn({ method: "POST" })
   .validator((input: unknown) => AskInput.parse(input))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
+    const { assertRateLimit } = await import("./rate-limit");
+    assertRateLimit(userId, "ask");
+
     const { embedTexts, generateStructured, verifyExternalSources } = await import("./ai.server");
 
     const doc = await getOwnedDocument(supabase, data.documentId, userId);
     if (doc.status !== "ready") throw new Error("This document is still being prepared.");
 
-    const mode =
-      data.searchMode === "external"
-        ? "external"
-        : data.verifyExternal || data.searchMode === "both"
-          ? "both"
-          : "document";
+    const mode = resolveAskSearchMode({
+      verifyExternal: data.verifyExternal,
+      searchMode: data.searchMode,
+    });
 
     let result = {
       sufficient: true,
@@ -437,7 +573,7 @@ export const askDocument = createServerFn({ method: "POST" })
           instructions: ANSWER_INSTRUCTIONS,
           input: `Document title: ${doc.title}\n\nQuestion: ${data.question}\n\nPassages:\n\n${buildContext(
             passages,
-            60000,
+            ASK_CONTEXT_CHAR_BUDGET,
           )}`,
           schemaName: "document_answer",
           schema: answerSchema,
@@ -456,7 +592,8 @@ export const askDocument = createServerFn({ method: "POST" })
         }));
     }
 
-    if (mode === "both" || mode === "external") {
+    // Document-only Ask never calls external research (fail-closed grounding stays local).
+    if (askNeedsExternalResearch(mode)) {
       externalVerification = await verifyExternalSources({
         question: data.question,
         documentAnswer: result.answer || undefined,
@@ -518,7 +655,10 @@ export const explainWithSela = createServerFn({ method: "POST" })
   .validator(parseExplainInput)
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const { generateStructured, translateExplanatoryText } = await import("./ai.server");
+    const { assertRateLimit } = await import("./rate-limit");
+    assertRateLimit(userId, "explain");
+
+    const { generateStructured, translateExplanatoryFieldsBatch } = await import("./ai.server");
 
     const doc = await getOwnedDocument(supabase, data.documentId, userId);
     void doc;
@@ -600,45 +740,28 @@ Output structured breakdown: section_title, what_it_says, why_it_matters, who_it
       maxTokens: 1536,
     });
 
-    // Translate if requested in non-English
+    // Translate if requested in non-English — single batched model call (not per-field).
     let translated = explanation;
     if (data.language && data.language !== "en") {
-      const translatedWhat = await translateExplanatoryText({
-        text: explanation.what_it_says,
+      const batch = await translateExplanatoryFieldsBatch({
+        fields: {
+          section_title: explanation.section_title,
+          what_it_says: explanation.what_it_says,
+          ...(explanation.why_it_matters ? { why_it_matters: explanation.why_it_matters } : {}),
+          ...(explanation.who_it_affects ? { who_it_affects: explanation.who_it_affects } : {}),
+          ...(explanation.what_happens ? { what_happens: explanation.what_happens } : {}),
+          ...(explanation.important_dates ? { important_dates: explanation.important_dates } : {}),
+        },
         targetLanguage: data.language,
       });
-      const translatedWhy = explanation.why_it_matters
-        ? await translateExplanatoryText({
-            text: explanation.why_it_matters,
-            targetLanguage: data.language,
-          })
-        : undefined;
-      const translatedWho = explanation.who_it_affects
-        ? await translateExplanatoryText({
-            text: explanation.who_it_affects,
-            targetLanguage: data.language,
-          })
-        : undefined;
-      const translatedHappens = explanation.what_happens
-        ? await translateExplanatoryText({
-            text: explanation.what_happens,
-            targetLanguage: data.language,
-          })
-        : undefined;
-      const translatedDates = explanation.important_dates
-        ? await translateExplanatoryText({
-            text: explanation.important_dates,
-            targetLanguage: data.language,
-          })
-        : undefined;
-
       translated = {
         ...explanation,
-        what_it_says: translatedWhat,
-        ...(translatedWhy ? { why_it_matters: translatedWhy } : {}),
-        ...(translatedWho ? { who_it_affects: translatedWho } : {}),
-        ...(translatedHappens ? { what_happens: translatedHappens } : {}),
-        ...(translatedDates ? { important_dates: translatedDates } : {}),
+        section_title: batch.section_title || explanation.section_title,
+        what_it_says: batch.what_it_says,
+        ...(batch.why_it_matters ? { why_it_matters: batch.why_it_matters } : {}),
+        ...(batch.who_it_affects ? { who_it_affects: batch.who_it_affects } : {}),
+        ...(batch.what_happens ? { what_happens: batch.what_happens } : {}),
+        ...(batch.important_dates ? { important_dates: batch.important_dates } : {}),
       };
     }
 
@@ -654,6 +777,9 @@ export const translateSelaVersion = createServerFn({ method: "POST" })
   .validator(parseTranslateInput)
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
+    const { assertRateLimit } = await import("./rate-limit");
+    assertRateLimit(userId, "translate");
+
     const { translateSelaVersionBatch } = await import("./ai.server");
 
     await getOwnedDocument(supabase, data.documentId, userId);

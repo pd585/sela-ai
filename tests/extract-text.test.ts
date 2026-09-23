@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  extractDocument,
-  MAX_DOCUMENT_SIZE_BYTES,
-  validateDocumentFile,
-} from "../src/lib/extract-text";
+import { MAX_DOCUMENT_SIZE_BYTES, validateDocumentFile } from "../src/lib/extract-text";
+import { extractDocument } from "../src/lib/extract-text.client";
 
 const pdfjsMock = vi.hoisted(() => {
   const destroy = vi.fn(async () => undefined);
