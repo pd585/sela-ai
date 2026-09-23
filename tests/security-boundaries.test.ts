@@ -7,7 +7,7 @@ describe("SELA security boundaries", () => {
   });
 
   it("bounds explanation input and rejects malformed payloads", async () => {
-    const { parseExplainInput } = await import("../src/lib/sela.functions");
+    const { parseExplainInput } = await import("../src/lib/sela.validation");
     const documentId = "11111111-1111-4111-8111-111111111111";
 
     expect(() =>

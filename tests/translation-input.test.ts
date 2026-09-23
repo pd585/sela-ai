@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseTranslateInput } from "../src/lib/sela.functions";
+import { parseTranslateInput } from "../src/lib/sela.validation";
 
 const documentId = "11111111-1111-4111-8111-111111111111";
 
