@@ -1,7 +1,19 @@
 import { createFileRoute, Link, redirect, useParams } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  assembleChunks,
+  batchIndices,
+  collectMemoChunkIndices,
+  computeChunkWindow,
+  initialChunkWindow,
+  mergeChunkContent,
+  stabilizeChunkWindow,
+  type ChunkContent,
+  type ChunkMeta,
+  type ChunkWindow,
+} from "@/lib/chunk-window";
 import {
   askDocument,
   explainWithSela,
@@ -53,8 +65,7 @@ export const Route = createFileRoute("/_authenticated/documents/$documentId")({
   component: DocumentReview,
 });
 
-type ChunkMeta = { chunk_index: number; page_number: number };
-type Chunk = ChunkMeta & { content: string };
+type Chunk = ChunkContent;
 type QuestionRow = {
   id: string;
   question: string;
@@ -99,7 +110,11 @@ export function DocumentReview() {
   // Side-by-side mode toggle for SELA'S VERSION tab (off by default so first paint skips full chunk bodies)
   const [sideBySide, setSideBySide] = useState(false);
   const [activeTab, setActiveTab] = useState("sela-version");
-  const [forceFullChunks, setForceFullChunks] = useState(false);
+  const [chunkWindow, setChunkWindow] = useState<ChunkWindow | null>(null);
+  const [loadedChunkMap, setLoadedChunkMap] = useState<Map<number, ChunkContent>>(() => new Map());
+  const passageListRef = useRef<HTMLDivElement | null>(null);
+  const scrollDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const evidenceTriggerRef = useRef<HTMLElement | null>(null);
 
   // Copied state
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -123,8 +138,7 @@ export function DocumentReview() {
     },
   });
 
-  const needFullChunks =
-    forceFullChunks || sideBySide || activeTab === "original" || activeTab === "memo";
+  const needWindowedContent = sideBySide || activeTab === "original";
 
   const { data: chunkMeta = [] } = useQuery({
     queryKey: ["chunks-meta", activeDocumentId],
@@ -140,23 +154,81 @@ export function DocumentReview() {
     enabled: Boolean(activeDocumentId),
   });
 
-  const { data: fullChunks = [], isFetching: fetchingFullChunks } = useQuery({
-    queryKey: ["chunks-content", activeDocumentId],
+  // Reset loaded content when switching documents.
+  useEffect(() => {
+    setLoadedChunkMap(new Map());
+    setChunkWindow(null);
+  }, [activeDocumentId]);
+
+  // Open Original / side-by-side with a bounded top window (not the full corpus).
+  useEffect(() => {
+    if (!needWindowedContent || chunkMeta.length === 0) return;
+    setChunkWindow((prev) => prev ?? initialChunkWindow(chunkMeta.length));
+  }, [needWindowedContent, chunkMeta.length]);
+
+  const activeWindow = chunkWindow;
+
+  const { isFetching: fetchingWindowChunks } = useQuery({
+    queryKey: [
+      "chunks-content-window",
+      activeDocumentId,
+      activeWindow?.start ?? -1,
+      activeWindow?.end ?? -1,
+    ],
     queryFn: async (): Promise<Chunk[]> => {
+      if (!activeWindow) return [];
       const { data, error } = await supabase
         .from("document_chunks")
         .select("chunk_index, page_number, content")
         .eq("document_id", activeDocumentId)
+        .gte("chunk_index", activeWindow.start)
+        .lte("chunk_index", activeWindow.end)
         .order("chunk_index", { ascending: true });
       if (error) throw new Error(error.message);
-      return data ?? [];
+      const rows = (data ?? []) as Chunk[];
+      setLoadedChunkMap((prev) => mergeChunkContent(prev, rows));
+      return rows;
     },
-    enabled: Boolean(activeDocumentId) && needFullChunks,
+    enabled: Boolean(activeDocumentId) && needWindowedContent && Boolean(activeWindow),
+    staleTime: 60_000,
   });
 
-  const chunks: Chunk[] = fullChunks.length
-    ? fullChunks
-    : chunkMeta.map((c) => ({ ...c, content: "" }));
+  const chunks: Chunk[] = useMemo(
+    () => assembleChunks(chunkMeta, loadedChunkMap),
+    [chunkMeta, loadedChunkMap],
+  );
+
+  const fetchingFullChunks = fetchingWindowChunks;
+
+  const onPassageScroll = useCallback(() => {
+    const el = passageListRef.current;
+    if (!el || chunkMeta.length === 0) return;
+    if (scrollDebounceRef.current) clearTimeout(scrollDebounceRef.current);
+    scrollDebounceRef.current = setTimeout(() => {
+      const children = Array.from(el.querySelectorAll<HTMLElement>("[data-chunk-index]"));
+      if (children.length === 0) return;
+      const viewTop = el.scrollTop;
+      const viewBottom = viewTop + el.clientHeight;
+      let first = chunkMeta.length - 1;
+      let last = 0;
+      for (const child of children) {
+        const top = child.offsetTop;
+        const bottom = top + child.offsetHeight;
+        const idx = Number(child.dataset["chunkIndex"]);
+        if (!Number.isFinite(idx)) continue;
+        if (bottom >= viewTop && top <= viewBottom) {
+          first = Math.min(first, idx);
+          last = Math.max(last, idx);
+        }
+      }
+      if (last < first) {
+        first = 0;
+        last = Math.min(29, chunkMeta.length - 1);
+      }
+      const next = computeChunkWindow(first, last, chunkMeta.length);
+      setChunkWindow((prev) => stabilizeChunkWindow(prev, next));
+    }, 120);
+  }, [chunkMeta.length]);
 
   const { data: questions = [] } = useQuery({
     queryKey: ["questions", activeDocumentId],
@@ -216,6 +288,7 @@ export function DocumentReview() {
   }, [doc, overview, chunkMap]);
 
   const showSource = async (chunkIndex: number, fallback?: Citation) => {
+    evidenceTriggerRef.current = document.activeElement as HTMLElement | null;
     const chunk = chunkMap.get(chunkIndex);
     if (chunk?.content) {
       setOpenSource({ page: chunk.page_number, text: chunk.content });
@@ -231,6 +304,7 @@ export function DocumentReview() {
       .eq("chunk_index", chunkIndex)
       .maybeSingle();
     if (!error && data?.content) {
+      setLoadedChunkMap((prev) => mergeChunkContent(prev, [data as Chunk]));
       setOpenSource({ page: data.page_number, text: data.content });
       return;
     }
@@ -253,6 +327,7 @@ export function DocumentReview() {
 
   // Explain with SELA action
   const handleExplain = async (chunkIndex?: number, text?: string) => {
+    evidenceTriggerRef.current = document.activeElement as HTMLElement | null;
     setExplaining(true);
     setOpenExplainDrawer(true);
     try {
@@ -370,20 +445,39 @@ export function DocumentReview() {
     selaVersion: SelaVersion;
     questions: QuestionRow[];
   }) => {
-    setForceFullChunks(true);
-    let passages = fullChunks;
-    if (passages.length === 0) {
+    // Targeted fetches only — never silently reintroduce a full-corpus client cache.
+    const needed = collectMemoChunkIndices({
+      sections: opts.selaVersion.sections,
+      clauses: opts.clauses,
+      keyTerms: opts.keyTerms,
+      issues: opts.issues,
+      citations: opts.questions.flatMap((q) => q.citations ?? []),
+    });
+    const passageMap = new Map<number, Chunk>();
+    for (const idx of needed) {
+      const hit = loadedChunkMap.get(idx);
+      if (hit?.content) passageMap.set(idx, hit);
+    }
+    const missing = needed.filter((idx) => !passageMap.has(idx));
+    for (const batch of batchIndices(missing, 40)) {
       const { data, error } = await supabase
         .from("document_chunks")
         .select("chunk_index, page_number, content")
         .eq("document_id", activeDocumentId)
+        .in("chunk_index", batch)
         .order("chunk_index", { ascending: true });
       if (error) {
         toast.error(error.message);
         return;
       }
-      passages = data ?? [];
+      for (const row of data ?? []) {
+        passageMap.set(row.chunk_index, row as Chunk);
+      }
+      setLoadedChunkMap((prev) => mergeChunkContent(prev, (data ?? []) as Chunk[]));
     }
+    const passages = needed
+      .map((idx) => passageMap.get(idx))
+      .filter((c): c is Chunk => Boolean(c?.content));
     const { exportExpertMemoPdf } = await import("@/lib/expert-memo-pdf");
     exportExpertMemoPdf({
       ...opts,
@@ -498,6 +592,8 @@ export function DocumentReview() {
               fetchingFullChunks={fetchingFullChunks}
               handleExplain={handleExplain}
               showSource={(idx) => void showSource(idx)}
+              passageListRef={passageListRef}
+              onPassageScroll={onPassageScroll}
             />
           </TabsContent>
 
@@ -561,21 +657,32 @@ export function DocumentReview() {
             )}
           </TabsContent>
 
-          {/* TAB 3: ORIGINAL DOCUMENT ONLY */}
+          {/* TAB 3: ORIGINAL DOCUMENT ONLY — windowed content, meta always available */}
           <TabsContent value="original" className="mt-7 space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="font-display text-2xl">Original document text</h2>
               <span className="text-xs text-muted-foreground">
                 {chunkMeta.length || chunks.length} extracted passages
+                {activeWindow ? ` · loaded ${activeWindow.start}–${activeWindow.end}` : ""}
               </span>
             </div>
 
-            <div className="space-y-3">
+            <div
+              ref={passageListRef}
+              className="max-h-[780px] space-y-3 overflow-y-auto pr-1"
+              onScroll={onPassageScroll}
+            >
               {fetchingFullChunks && chunks.every((c) => !c.content) && (
-                <p className="text-sm text-muted-foreground">Loading original passages…</p>
+                <p className="text-sm text-muted-foreground" aria-live="polite">
+                  Loading original passages…
+                </p>
               )}
               {chunks.map((chunk) => (
-                <div key={chunk.chunk_index} className="paper-panel p-5">
+                <div
+                  key={chunk.chunk_index}
+                  data-chunk-index={chunk.chunk_index}
+                  className="paper-panel p-5"
+                >
                   <div className="flex items-center justify-between text-xs text-muted-foreground border-b border-border/60 pb-2">
                     <span className="font-medium text-brass">
                       Passage {chunk.chunk_index} · Page {chunk.page_number}
@@ -590,7 +697,7 @@ export function DocumentReview() {
                     </Button>
                   </div>
                   <p className="mt-3 whitespace-pre-wrap font-mono text-xs leading-relaxed text-foreground/90">
-                    {chunk.content || "…"}
+                    {chunk.content || (fetchingFullChunks ? "Loading…" : "…")}
                   </p>
                 </div>
               ))}
@@ -783,6 +890,7 @@ export function DocumentReview() {
         onOpenExplainChange={setOpenExplainDrawer}
         explaining={explaining}
         explainResult={explainResult}
+        focusReturnRef={evidenceTriggerRef}
       />
     </AppShell>
   );

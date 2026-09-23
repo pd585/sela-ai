@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { processDocument } from "@/lib/sela.functions";
 import { validateDocumentFile } from "@/lib/extract-text";
+import { rollbackFailedUpload } from "@/lib/upload-rollback";
 import { AppShell } from "@/components/sela/shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -148,8 +149,11 @@ export function Workspace() {
         });
     } catch (error) {
       setUploadState(null);
-      if (storagePath) await supabase.storage.from("documents").remove([storagePath]);
-      if (documentId) await supabase.from("documents").delete().eq("id", documentId);
+      await rollbackFailedUpload({
+        client: supabase,
+        storagePath,
+        documentId,
+      });
       toast.error(error instanceof Error ? error.message : "That upload didn't work.");
     }
   };
@@ -217,6 +221,18 @@ export function Workspace() {
           />
         </div>
 
+        <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+          {uploadState
+            ? uploadState
+            : documents.some((d) => d.status === "preparing")
+              ? "A document is processing."
+              : documents.some((d) => d.status === "failed")
+                ? "A document failed to process."
+                : documents.some((d) => d.status === "ready")
+                  ? "Documents ready for review."
+                  : ""}
+        </div>
+
         {documents.length > 0 && (
           <div className="relative mt-8 max-w-sm">
             <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -266,11 +282,16 @@ export function Workspace() {
                   <p className="mt-1 text-xs text-muted-foreground">
                     {doc.file_name}
                     {doc.page_count ? ` · ${doc.page_count} pages` : ""} ·{" "}
-                    {failed
-                      ? `Unable to process · ${doc.error_message ?? "Please try again"}`
-                      : preparing
-                        ? "Processing"
-                        : "Ready for review"}
+                    <span
+                      aria-live={preparing || failed ? "assertive" : "polite"}
+                      aria-atomic="true"
+                    >
+                      {failed
+                        ? `Unable to process · ${doc.error_message ?? "Please try again"}`
+                        : preparing
+                          ? doc.status_detail || "Processing"
+                          : "Ready for review"}
+                    </span>
                   </p>
                 </div>
                 <div className="flex items-center gap-2">

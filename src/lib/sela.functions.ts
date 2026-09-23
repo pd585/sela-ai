@@ -221,7 +221,7 @@ type OwnedDocument = {
   error_message?: string | null;
 };
 
-async function getOwnedDocument(
+export async function getOwnedDocument(
   supabaseClient: SupabaseClient<Database>,
   documentId: string,
   userId: string,
@@ -383,13 +383,22 @@ export const processDocument = createServerFn({ method: "POST" })
           throw new Error(downloadError?.message ?? "Could not download the uploaded document.");
         }
 
-        const buffer = await fileBlob.arrayBuffer();
+        // Size-aware: byteLength is known before parse; avoid retaining blob + buffer together.
+        let buffer: ArrayBuffer | null = await fileBlob.arrayBuffer();
         const { extractAndChunkFromBuffer } = await import("./extract-text.server");
-        const { extracted, chunks: built } = await extractAndChunkFromBuffer({
-          buffer,
-          fileName: fullDoc.file_name,
-          mimeType: fullDoc.mime_type,
-        });
+        let extracted;
+        let built;
+        try {
+          const result = await extractAndChunkFromBuffer({
+            buffer,
+            fileName: fullDoc.file_name,
+            mimeType: fullDoc.mime_type,
+          });
+          extracted = result.extracted;
+          built = result.chunks;
+        } finally {
+          buffer = null;
+        }
         if (built.length === 0) {
           throw new Error("No selectable text was found — SELA cannot read scanned images yet.");
         }

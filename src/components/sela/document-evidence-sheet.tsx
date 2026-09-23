@@ -1,3 +1,4 @@
+import type { RefObject } from "react";
 import { Loader2 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import type { SelaVersionSection } from "@/lib/sela.functions";
@@ -10,7 +11,26 @@ type Props = {
   onOpenExplainChange: (open: boolean) => void;
   explaining: boolean;
   explainResult: SelaVersionSection | null;
+  /** Element that opened the sheet — focus returns here on close. */
+  focusReturnRef?: RefObject<HTMLElement | null>;
 };
+
+function restoreFocus(ref?: RefObject<HTMLElement | null>) {
+  const node = ref?.current;
+  if (node && typeof node.focus === "function") {
+    window.requestAnimationFrame(() => node.focus());
+  }
+}
+
+function focusEvidenceTarget(event: Event) {
+  const current = event.currentTarget;
+  if (!(current instanceof HTMLElement)) return;
+  const target = current.querySelector<HTMLElement>("[data-evidence-focus-target]");
+  if (target) {
+    event.preventDefault();
+    target.focus();
+  }
+}
 
 export function DocumentEvidenceSheet({
   openSource,
@@ -19,13 +39,21 @@ export function DocumentEvidenceSheet({
   onOpenExplainChange,
   explaining,
   explainResult,
+  focusReturnRef,
 }: Props) {
   return (
     <>
       <Sheet open={Boolean(openSource)} onOpenChange={(open) => !open && onOpenSourceChange(false)}>
-        <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
+        <SheetContent
+          className="w-full overflow-y-auto sm:max-w-lg"
+          onOpenAutoFocus={focusEvidenceTarget}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            restoreFocus(focusReturnRef);
+          }}
+        >
           <SheetHeader>
-            <SheetTitle className="font-display text-2xl">
+            <SheetTitle className="font-display text-2xl" tabIndex={-1} data-evidence-focus-target>
               Source passage · Page {openSource?.page}
             </SheetTitle>
           </SheetHeader>
@@ -38,11 +66,20 @@ export function DocumentEvidenceSheet({
       </Sheet>
 
       <Sheet open={openExplainDrawer} onOpenChange={onOpenExplainChange}>
-        <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
+        <SheetContent
+          className="w-full overflow-y-auto sm:max-w-xl"
+          onOpenAutoFocus={focusEvidenceTarget}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            restoreFocus(focusReturnRef);
+          }}
+        >
           <SheetHeader>
-            <SheetTitle className="font-display text-2xl">Explain with SELA</SheetTitle>
+            <SheetTitle className="font-display text-2xl" tabIndex={-1} data-evidence-focus-target>
+              Explain with SELA
+            </SheetTitle>
           </SheetHeader>
-          <div className="px-4 pb-8 pt-4 space-y-4">
+          <div className="px-4 pb-8 pt-4 space-y-4" aria-live="polite">
             {explaining && (
               <div className="flex items-center gap-3 py-12 text-sm text-muted-foreground justify-center">
                 <Loader2 className="size-5 animate-spin text-brass" /> SELA is generating a grounded

@@ -59,12 +59,23 @@ export function DocumentAskPanel({
             </p>
           </div>
           {/* Research Scope Selector */}
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[0.68rem] font-bold uppercase tracking-wider text-muted-foreground mr-1">
+          <div
+            className="flex flex-wrap items-center gap-2"
+            role="radiogroup"
+            aria-label="Ask research scope"
+            aria-describedby="ask-scope-description"
+          >
+            <span
+              id="ask-scope-label"
+              className="text-[0.68rem] font-bold uppercase tracking-wider text-muted-foreground mr-1"
+            >
               SCOPE:
             </span>
             <button
               type="button"
+              role="radio"
+              aria-checked={searchMode === "document"}
+              aria-label="Document only"
               onClick={() => {
                 setSearchMode("document");
                 setVerifyExternal(false);
@@ -79,6 +90,9 @@ export function DocumentAskPanel({
             </button>
             <button
               type="button"
+              role="radio"
+              aria-checked={searchMode === "both"}
+              aria-label="Document plus external sources"
               onClick={() => {
                 setSearchMode("both");
                 setVerifyExternal(true);
@@ -93,6 +107,9 @@ export function DocumentAskPanel({
             </button>
             <button
               type="button"
+              role="radio"
+              aria-checked={searchMode === "external"}
+              aria-label="External sources only"
               onClick={() => {
                 setSearchMode("external");
                 setVerifyExternal(true);
@@ -126,7 +143,11 @@ export function DocumentAskPanel({
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-4 border-t border-border pt-4">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">
+            <span
+              id="ask-scope-description"
+              className="text-xs text-muted-foreground"
+              aria-live="polite"
+            >
               {searchMode === "document"
                 ? "Searching uploaded document passages only."
                 : searchMode === "both"

@@ -1,3 +1,4 @@
+import type { RefObject } from "react";
 import { Columns2, Globe, Loader2, Quote, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -24,6 +25,8 @@ type Props = {
   fetchingFullChunks: boolean;
   handleExplain: (chunkIndex?: number, text?: string) => void;
   showSource: (chunkIndex: number) => void;
+  passageListRef?: RefObject<HTMLDivElement | null>;
+  onPassageScroll?: () => void;
 };
 
 export function DocumentVersionPanel({
@@ -37,6 +40,8 @@ export function DocumentVersionPanel({
   fetchingFullChunks,
   handleExplain,
   showSource,
+  passageListRef,
+  onPassageScroll,
 }: Props) {
   return (
     <div className="mt-7 space-y-6">
@@ -70,6 +75,7 @@ export function DocumentVersionPanel({
           <button
             type="button"
             onClick={() => setSideBySide(!sideBySide)}
+            aria-pressed={sideBySide}
             className={`hidden items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium md:inline-flex ${
               sideBySide
                 ? "bg-brass/20 text-brass-dark dark:text-brass"
@@ -84,8 +90,8 @@ export function DocumentVersionPanel({
 
       {/* Authoritative Text Notice */}
       <p className="text-xs italic text-muted-foreground">
-        SELA'S VERSION is generated for understanding and review. The original document remains the
-        authoritative text.
+        SELA&apos;S VERSION is generated for understanding and review. The original document remains
+        the authoritative text.
       </p>
 
       {/* Split View / Side-by-Side */}
@@ -100,13 +106,20 @@ export function DocumentVersionPanel({
               </span>
             </div>
 
-            <div className="max-h-[750px] space-y-3 overflow-y-auto pr-2">
+            <div
+              ref={passageListRef}
+              className="max-h-[750px] space-y-3 overflow-y-auto pr-2"
+              onScroll={onPassageScroll}
+            >
               {fetchingFullChunks && chunks.every((c) => !c.content) && (
-                <p className="text-xs text-muted-foreground">Loading original passages…</p>
+                <p className="text-xs text-muted-foreground" aria-live="polite">
+                  Loading original passages…
+                </p>
               )}
               {chunks.map((chunk) => (
                 <div
                   key={chunk.chunk_index}
+                  data-chunk-index={chunk.chunk_index}
                   className="paper-panel relative border border-border/80 p-4 transition-colors hover:border-brass/40"
                 >
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -123,7 +136,7 @@ export function DocumentVersionPanel({
                     </Button>
                   </div>
                   <p className="mt-2 whitespace-pre-wrap font-mono text-xs leading-relaxed text-foreground/90">
-                    {chunk.content || "…"}
+                    {chunk.content || (fetchingFullChunks ? "Loading…" : "…")}
                   </p>
                 </div>
               ))}
@@ -134,7 +147,7 @@ export function DocumentVersionPanel({
         {/* RIGHT COLUMN: SELA'S VERSION (Structured breakdowns & visual intelligence) */}
         <div className="space-y-4">
           <div className="flex items-center justify-between border-b border-border pb-2">
-            <h2 className="font-display text-lg">SELA'S VERSION</h2>
+            <h2 className="font-display text-lg">SELA&apos;S VERSION</h2>
             <span className="text-xs uppercase tracking-wider text-brass">
               Faithful structured breakdown
             </span>

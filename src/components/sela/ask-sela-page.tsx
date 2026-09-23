@@ -162,7 +162,11 @@ export function AskSelaPage() {
                   }
                 }}
               >
-                <SelectTrigger id="ask-research-scope" className="mt-2">
+                <SelectTrigger
+                  id="ask-research-scope"
+                  className="mt-2"
+                  aria-describedby="ask-page-scope-description"
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -171,6 +175,17 @@ export function AskSelaPage() {
                   <SelectItem value="external">External sources only</SelectItem>
                 </SelectContent>
               </Select>
+              <p
+                id="ask-page-scope-description"
+                className="mt-2 text-xs text-muted-foreground"
+                aria-live="polite"
+              >
+                {searchMode === "document"
+                  ? "Answers use only passages from the selected document."
+                  : searchMode === "both"
+                    ? "Answers combine document passages with public external legal sources."
+                    : "Answers use public external legal sources only (not this document’s text)."}
+              </p>
             </div>
 
             <div className="flex items-center gap-3">

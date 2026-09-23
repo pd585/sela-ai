@@ -8,6 +8,27 @@ import { chunkPages, validateDocumentFile } from "./extract-text";
 export type { ExtractedDocument, ExtractedPage, Chunk } from "./extract-text";
 export { chunkPages, validateDocumentFile };
 
+/** pdfjs-dist (legacy) expects Promise.withResolvers; polyfill for Node < 22. */
+function ensurePromiseWithResolvers(): void {
+  const P = Promise as unknown as {
+    withResolvers?: <T>() => {
+      promise: Promise<T>;
+      resolve: (value: T | PromiseLike<T>) => void;
+      reject: (reason?: unknown) => void;
+    };
+  };
+  if (typeof P.withResolvers === "function") return;
+  P.withResolvers = function withResolvers<T>() {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  };
+}
+
 function clean(text: string) {
   return (
     text
@@ -37,15 +58,27 @@ async function mapPool<T, R>(
 }
 
 async function extractPdfFromBuffer(buffer: ArrayBuffer): Promise<ExtractedDocument> {
+  ensurePromiseWithResolvers();
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  // Server extraction: disable worker (Node has no dedicated worker thread setup here).
-  pdfjs.GlobalWorkerOptions.workerSrc = "";
+  // Point at the packaged legacy worker so Node can fall back to the fake worker cleanly.
+  if (!pdfjs.GlobalWorkerOptions.workerSrc) {
+    const { pathToFileURL } = await import("node:url");
+    const { createRequire } = await import("node:module");
+    const require = createRequire(import.meta.url);
+    const workerPath = require.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs");
+    pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
+  }
+
+  // View over the same ArrayBuffer — avoids an extra full copy before parse.
+  const data = new Uint8Array(buffer);
 
   const loadingTask = pdfjs.getDocument({
-    data: new Uint8Array(buffer),
+    data,
     useSystemFonts: true,
     isEvalSupported: false,
     disableFontFace: true,
+    disableAutoFetch: true,
+    disableStream: true,
   });
 
   try {
@@ -77,7 +110,10 @@ async function extractPdfFromBuffer(buffer: ArrayBuffer): Promise<ExtractedDocum
 
 async function extractDocxFromBuffer(buffer: ArrayBuffer): Promise<ExtractedDocument> {
   const mammoth = await import("mammoth");
-  const result = await mammoth.extractRawText({ buffer: Buffer.from(buffer) });
+  // Mammoth runtime only accepts { buffer } (types mention arrayBuffer but unzip.js does not).
+  // Single Buffer materialization; caller should drop the ArrayBuffer reference afterward.
+  const nodeBuffer = Buffer.from(buffer);
+  const result = await mammoth.extractRawText({ buffer: nodeBuffer });
   const text = clean(result.value);
   const paragraphs = text.split(/\n+/).filter(Boolean);
   const pages: ExtractedPage[] = [];
@@ -103,9 +139,10 @@ export async function extractDocumentFromBuffer(args: {
 }): Promise<ExtractedDocument> {
   const fileName = args.fileName.toLowerCase();
   const mime = args.mimeType ?? "";
+  const byteLength = args.buffer.byteLength;
   validateDocumentFile({
     name: args.fileName,
-    size: args.buffer.byteLength,
+    size: byteLength,
     type:
       mime ||
       (fileName.endsWith(".pdf")
