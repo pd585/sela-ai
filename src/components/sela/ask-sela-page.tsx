@@ -13,13 +13,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Check, Copy, ExternalLink, Loader2, Quote } from "lucide-react";
 import { toast } from "sonner";
 
 type DocumentOption = { id: string; title: string; file_name: string };
-type Chunk = { chunk_index: number; page_number: number; content: string };
+type SearchMode = "document" | "both" | "external";
 type Answer = {
   question: string;
   answer: string;
@@ -31,6 +30,7 @@ type Answer = {
     summary: string;
     sources?: Array<{ title: string; url: string; published_date?: string }>;
   } | null;
+  mode: SearchMode;
 };
 
 function titleFor(title: string, fileName: string) {
@@ -41,7 +41,7 @@ function titleFor(title: string, fileName: string) {
 export function AskSelaPage() {
   const [selectedId, setSelectedId] = useState("");
   const [question, setQuestion] = useState("");
-  const [verifyExternal, setVerifyExternal] = useState(false);
+  const [searchMode, setSearchMode] = useState<SearchMode>("document");
   const [asking, setAsking] = useState(false);
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [source, setSource] = useState<{ page: number; text: string } | null>(null);
@@ -62,20 +62,6 @@ export function AskSelaPage() {
 
   const activeId = selectedId || documents[0]?.id || "";
 
-  const { data: chunks = [] } = useQuery({
-    queryKey: ["ask-chunks", activeId],
-    enabled: Boolean(activeId),
-    queryFn: async (): Promise<Chunk[]> => {
-      const { data, error } = await supabase
-        .from("document_chunks")
-        .select("chunk_index, page_number, content")
-        .eq("document_id", activeId)
-        .order("chunk_index");
-      if (error) throw new Error(error.message);
-      return data ?? [];
-    },
-  });
-
   const submit = async (overrideQuestion?: string) => {
     const text = (overrideQuestion ?? question).trim();
     if (!activeId || text.length < 3) return;
@@ -85,7 +71,7 @@ export function AskSelaPage() {
         data: {
           documentId: activeId,
           question: text,
-          verifyExternal,
+          searchMode,
         },
       });
       setAnswer(res as Answer);
@@ -149,25 +135,42 @@ export function AskSelaPage() {
             )}
           </div>
 
-          <Textarea
-            className="mt-4"
-            rows={4}
-            placeholder="What do you want to understand? e.g. What is the penalty for early termination?"
-            value={question}
-            onChange={(event) => setQuestion(event.target.value)}
-            disabled={!activeId}
-          />
+          <div className="mt-4">
+            <Label htmlFor="ask-question" className="sr-only">
+              Your question
+            </Label>
+            <Textarea
+              id="ask-question"
+              rows={4}
+              placeholder="What do you want to understand? e.g. What is the penalty for early termination?"
+              value={question}
+              onChange={(event) => setQuestion(event.target.value)}
+              disabled={!activeId}
+            />
+          </div>
 
           <div className="flex flex-wrap items-center justify-between gap-4 border-t border-border pt-4">
-            <div className="flex items-center gap-2">
-              <Switch
-                id="ask-ext-verify"
-                checked={verifyExternal}
-                onCheckedChange={setVerifyExternal}
-              />
-              <Label htmlFor="ask-ext-verify" className="cursor-pointer text-xs font-medium">
-                Verify with external sources
+            <div className="min-w-56">
+              <Label htmlFor="ask-research-scope" className="text-xs font-medium">
+                Research scope
               </Label>
+              <Select
+                value={searchMode}
+                onValueChange={(value) => {
+                  if (value === "document" || value === "both" || value === "external") {
+                    setSearchMode(value);
+                  }
+                }}
+              >
+                <SelectTrigger id="ask-research-scope" className="mt-2">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="document">This document only</SelectItem>
+                  <SelectItem value="both">Document + external sources</SelectItem>
+                  <SelectItem value="external">External sources only</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="flex items-center gap-3">
@@ -209,7 +212,9 @@ export function AskSelaPage() {
             {/* LAYER 1: FROM YOUR DOCUMENT */}
             <div className="rounded-md border border-border/80 bg-background/50 p-4">
               <p className="text-[0.68rem] font-bold uppercase tracking-[0.18em] text-brass">
-                LAYER 1 · FROM YOUR DOCUMENT
+                {answer.mode === "external"
+                  ? "EXTERNAL SOURCE RESEARCH"
+                  : "LAYER 1 · FROM YOUR DOCUMENT"}
               </p>
               <p className="mt-2 text-base leading-relaxed text-foreground/90">{answer.answer}</p>
               {answer.sufficient === false && (
@@ -224,8 +229,7 @@ export function AskSelaPage() {
                     type="button"
                     className="source-mark"
                     onClick={() => {
-                      const chunk = chunks.find((item) => item.chunk_index === citation.chunkIndex);
-                      setSource({ page: citation.page, text: chunk?.content ?? citation.excerpt });
+                      setSource({ page: citation.page, text: citation.excerpt });
                     }}
                   >
                     <Quote className="size-3 text-brass" /> View source · page {citation.page}
@@ -235,7 +239,8 @@ export function AskSelaPage() {
             </div>
 
             {/* LAYER 2: EXTERNAL VERIFICATION (if performed) */}
-            {answer.external_verification &&
+            {answer.mode !== "external" &&
+              answer.external_verification &&
               answer.external_verification.status !== "UNAVAILABLE" && (
                 <div className="rounded-md border border-brass/30 bg-muted/30 p-4">
                   <div className="flex items-center justify-between">

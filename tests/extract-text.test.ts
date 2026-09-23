@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { extractDocument } from "../src/lib/extract-text";
+import {
+  extractDocument,
+  MAX_DOCUMENT_SIZE_BYTES,
+  validateDocumentFile,
+} from "../src/lib/extract-text";
 
 const pdfjsMock = vi.hoisted(() => {
   const destroy = vi.fn(async () => undefined);
@@ -27,10 +31,27 @@ vi.mock("pdfjs-dist", () => ({
 vi.mock("pdfjs-dist/build/pdf.worker.min.mjs?url", () => ({ default: "worker.js" }));
 
 describe("PDF extraction lifecycle", () => {
+  it("rejects empty, oversized, and unsupported uploads before extraction", () => {
+    expect(() =>
+      validateDocumentFile({ name: "empty.pdf", size: 0, type: "application/pdf" }),
+    ).toThrow("non-empty");
+    expect(() =>
+      validateDocumentFile({
+        name: "too-large.pdf",
+        size: MAX_DOCUMENT_SIZE_BYTES + 1,
+        type: "application/pdf",
+      }),
+    ).toThrow("25 MB");
+    expect(() => validateDocumentFile({ name: "notes.txt", size: 50, type: "text/plain" })).toThrow(
+      "PDF and Word",
+    );
+  });
+
   it("extracts pages and destroys the loading task after extraction", async () => {
     const file = {
       name: "contract.pdf",
       type: "application/pdf",
+      size: 1,
       arrayBuffer: async () => new ArrayBuffer(1),
     } as File;
 

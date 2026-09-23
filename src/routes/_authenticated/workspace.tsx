@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { processDocument } from "@/lib/sela.functions";
-import { extractDocument, chunkPages } from "@/lib/extract-text";
+import { extractDocument, chunkPages, validateDocumentFile } from "@/lib/extract-text";
 import { AppShell } from "@/components/sela/shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,6 +51,7 @@ type DocumentRow = {
   status: string;
   status_detail: string | null;
   error_message: string | null;
+  storage_path: string | null;
   created_at: string;
 };
 
@@ -80,7 +81,7 @@ export function Workspace() {
       const { data, error } = await supabase
         .from("documents")
         .select(
-          "id, title, file_name, page_count, status, status_detail, error_message, created_at",
+          "id, title, file_name, page_count, status, status_detail, error_message, storage_path, created_at",
         )
         .order("created_at", { ascending: false });
       if (error) throw new Error(error.message);
@@ -104,7 +105,9 @@ export function Workspace() {
     if (!userId) return;
 
     let documentId: string | null = null;
+    let storagePath: string | null = null;
     try {
+      validateDocumentFile(file);
       setUploadState("Reading the file");
       const extracted = await extractDocument(file);
       const chunks = chunkPages(extracted.pages);
@@ -112,7 +115,7 @@ export function Workspace() {
         throw new Error("No selectable text was found — SELA cannot read scanned images yet.");
 
       setUploadState("Storing the document");
-      const storagePath = `${userId}/${crypto.randomUUID()}-${file.name}`;
+      storagePath = `${userId}/${crypto.randomUUID()}-${file.name}`;
       const { error: uploadError } = await supabase.storage
         .from("documents")
         .upload(storagePath, file, { contentType: file.type || "application/octet-stream" });
@@ -163,6 +166,7 @@ export function Workspace() {
         });
     } catch (error) {
       setUploadState(null);
+      if (storagePath) await supabase.storage.from("documents").remove([storagePath]);
       if (documentId) await supabase.from("documents").delete().eq("id", documentId);
       toast.error(error instanceof Error ? error.message : "That upload didn't work.");
     }
@@ -172,6 +176,15 @@ export function Workspace() {
     if (!docToDelete) return;
     setIsDeleting(true);
     try {
+      if (docToDelete.storage_path) {
+        const { error: storageError } = await supabase.storage
+          .from("documents")
+          .remove([docToDelete.storage_path]);
+        if (storageError) {
+          toast.error("That document file could not be removed.");
+          return;
+        }
+      }
       const { error } = await supabase.from("documents").delete().eq("id", docToDelete.id);
       if (error) {
         toast.error("That document could not be removed.");

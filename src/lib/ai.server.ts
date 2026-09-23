@@ -28,6 +28,38 @@ export type ExternalVerificationResult = {
   sources: ExternalSource[];
 };
 
+function sanitizeExternalSources(value: unknown): ExternalSource[] {
+  if (!Array.isArray(value)) return [];
+
+  const sources: ExternalSource[] = [];
+  const seen = new Set<string>();
+  for (const source of value) {
+    if (!source || typeof source !== "object") continue;
+    const record = source as Record<string, unknown>;
+    const title = typeof record["title"] === "string" ? record["title"].trim() : "";
+    const rawUrl = typeof record["url"] === "string" ? record["url"].trim() : "";
+    if (!title || !rawUrl || title.length > 300 || rawUrl.length > 2000) continue;
+
+    let url: URL;
+    try {
+      url = new URL(rawUrl);
+    } catch {
+      continue;
+    }
+    if (url.protocol !== "https:" && url.protocol !== "http:") continue;
+    if (seen.has(url.toString())) continue;
+    seen.add(url.toString());
+    sources.push({
+      title,
+      url: url.toString(),
+      ...(typeof record["published_date"] === "string"
+        ? { published_date: record["published_date"].slice(0, 100) }
+        : {}),
+    });
+  }
+  return sources;
+}
+
 export type TranslationItem = {
   section_index: number;
   section_title?: string;
@@ -499,15 +531,7 @@ Respond strictly in JSON:
           ? parsed.status
           : "NEEDS CONTEXT";
 
-        const combinedSources = [...(parsed.sources || []), ...webSources];
-        const uniqueSources: ExternalSource[] = [];
-        const seen = new Set<string>();
-        for (const s of combinedSources) {
-          if (s.url && !seen.has(s.url)) {
-            seen.add(s.url);
-            uniqueSources.push(s);
-          }
-        }
+        const uniqueSources = sanitizeExternalSources([...(parsed.sources || []), ...webSources]);
 
         return {
           status,

@@ -136,7 +136,7 @@ Supabase Row Level Security and authenticated ownership checks scope documents t
 
 ## Testing
 
-The current verification suite passes 26 tests. TypeScript completes without errors. ESLint completes with no errors and six existing Fast Refresh warnings in UI component files. The production build completes successfully.
+The current verification suite passes 31 tests. TypeScript completes without errors. ESLint completes with no errors and six existing Fast Refresh warnings in UI component files. The production build completes successfully.
 
 ## Limitations
 

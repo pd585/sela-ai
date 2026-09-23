@@ -15,15 +15,13 @@ const AskInput = z.object({
 const ExplainInput = z.object({
   documentId: z.string().uuid(),
   chunkIndex: z.number().int().optional(),
-  text: z.string().optional(),
+  text: z.string().max(12000).optional(),
   language: z.enum(["en", "te", "hi", "ml", "kn"]).optional().default("en"),
 });
 
-const TranslateInput = z.object({
-  documentId: z.string().uuid(),
-  targetLanguage: z.enum(["en", "te", "hi", "ml", "kn"]),
-  sections: z.array(z.any()).optional(),
-});
+export function parseExplainInput(input: unknown) {
+  return ExplainInput.parse(input);
+}
 
 export type Citation = { chunkIndex: number; page: number; excerpt: string };
 
@@ -47,7 +45,11 @@ export type ClauseFinding = {
 
 export type IssueFinding = { title: string; observation: string; chunk_index: number };
 
-export type VisualItem = { label: string; detail?: string; step?: number };
+export type VisualItem = {
+  label: string;
+  detail?: string | undefined;
+  step?: number | undefined;
+};
 
 export type VisualIntelligence = {
   type:
@@ -86,6 +88,69 @@ export type Analysis = {
   issues: IssueFinding[];
   sela_version: SelaVersion;
 };
+
+const translatedSectionInput = z
+  .object({
+    section_title: z.string().min(1).max(400),
+    chunk_index: z.number().int().nonnegative(),
+    page_number: z.number().int().positive(),
+    what_it_says: z.string().min(1).max(6000),
+    why_it_matters: z.string().min(1).max(4000).optional(),
+    who_it_affects: z.string().min(1).max(4000).optional(),
+    what_happens: z.string().min(1).max(4000).optional(),
+    important_dates: z.string().min(1).max(4000).optional(),
+    visual: z
+      .object({
+        type: z.enum([
+          "timeline",
+          "obligation_flow",
+          "responsibility_map",
+          "process_flow",
+          "clause_relationship",
+          "decision_tree",
+          "key_dates",
+        ]),
+        title: z.string().min(1).max(400),
+        items: z
+          .array(
+            z
+              .object({
+                label: z.string().min(1).max(1000),
+                detail: z.string().min(1).max(4000).optional(),
+                step: z.number().int().nonnegative().optional(),
+              })
+              .strict(),
+          )
+          .max(40),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+const TranslateInput = z
+  .object({
+    documentId: z.string().uuid(),
+    targetLanguage: z.enum(["en", "te", "hi", "ml", "kn"]),
+    sections: z.array(translatedSectionInput).max(60).optional(),
+  })
+  .superRefine((value, context) => {
+    const totalCharacters = (value.sections ?? []).reduce(
+      (total, section) => total + JSON.stringify(section).length,
+      0,
+    );
+    if (totalCharacters > 90_000) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "The selected sections are too large to translate safely in one request.",
+        path: ["sections"],
+      });
+    }
+  });
+
+export function parseTranslateInput(input: unknown) {
+  return TranslateInput.parse(input);
+}
 
 const obj = (props: Record<string, unknown>) => ({
   type: "object",
@@ -515,12 +580,13 @@ export const askDocument = createServerFn({ method: "POST" })
       citations: cited,
       follow_ups: result.follow_ups || [],
       external_verification: externalVerification,
+      mode,
     };
   });
 
 export const explainWithSela = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator((input: unknown) => ExplainInput.parse(input))
+  .validator(parseExplainInput)
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     const { generateStructured, translateExplanatoryText } = await import("./ai.server");
@@ -532,17 +598,16 @@ export const explainWithSela = createServerFn({ method: "POST" })
     let pageNum = 1;
     const chunkIdx = data.chunkIndex || 0;
 
-    if (!textToExplain && data.chunkIndex !== undefined) {
+    if (data.chunkIndex !== undefined) {
       const { data: chunk } = await supabase
         .from("document_chunks")
         .select("content, page_number")
         .eq("document_id", data.documentId)
         .eq("chunk_index", data.chunkIndex)
         .single();
-      if (chunk) {
-        textToExplain = chunk.content;
-        pageNum = chunk.page_number;
-      }
+      if (!chunk) throw new Error("That source passage could not be found.");
+      textToExplain = chunk.content;
+      pageNum = chunk.page_number;
     }
 
     if (!textToExplain) {
@@ -657,7 +722,7 @@ Output structured breakdown: section_title, what_it_says, why_it_matters, who_it
 
 export const translateSelaVersion = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator((input: unknown) => TranslateInput.parse(input))
+  .validator(parseTranslateInput)
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     const { translateSelaVersionBatch } = await import("./ai.server");

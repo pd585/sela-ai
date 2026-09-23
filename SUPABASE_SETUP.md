@@ -24,8 +24,9 @@ This script:
 1. In your Supabase Dashboard, navigate to **Storage**.
 2. Click **New Bucket** and create a bucket named: `documents`.
 3. Keep the bucket **Private** (Public: `OFF`).
-4. Go to **SQL Editor** and run `drizzle/migrations/0001_documents_storage_policies.sql` to apply the RLS policies for storage objects:
+4. Go to **SQL Editor** and run `drizzle/migrations/0001_documents_storage_policies.sql`, followed by `drizzle/migrations/0002_documents_bucket_limits.sql`, to apply the RLS policies and bucket restrictions:
    - Users can read, upload, and delete only their own document files (`folder = auth.uid()`).
+   - The bucket stays private and accepts only PDF/DOCX files up to 25 MB.
 
 ---
 
