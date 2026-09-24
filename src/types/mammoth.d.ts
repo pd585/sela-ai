@@ -23,3 +23,7 @@ declare module "pdfjs-dist/legacy/build/pdf.mjs" {
     destroy: () => Promise<void>;
   };
 }
+
+declare module "pdfjs-dist/legacy/build/pdf.worker.mjs" {
+  export const WorkerMessageHandler: unknown;
+}

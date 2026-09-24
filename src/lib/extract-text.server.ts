@@ -59,15 +59,17 @@ async function mapPool<T, R>(
 
 async function extractPdfFromBuffer(buffer: ArrayBuffer): Promise<ExtractedDocument> {
   ensurePromiseWithResolvers();
+  // Explicitly import the legacy worker so Nitro/Vite bundles it into the server
+  // artifact, then register it for PDF.js's fake-worker path. On Vercel, pdf.mjs is
+  // inlined into `_libs/pdfjs-dist.mjs` without a sibling `pdf.worker.mjs`; without
+  // this, fake-worker does `import("./pdf.worker.mjs")` → /var/task/_libs/pdf.worker.mjs.
+  const pdfjsWorker = await import("pdfjs-dist/legacy/build/pdf.worker.mjs");
+  (
+    globalThis as typeof globalThis & {
+      pdfjsWorker?: { WorkerMessageHandler?: unknown };
+    }
+  ).pdfjsWorker = pdfjsWorker;
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  // Point at the packaged legacy worker so Node can fall back to the fake worker cleanly.
-  if (!pdfjs.GlobalWorkerOptions.workerSrc) {
-    const { pathToFileURL } = await import("node:url");
-    const { createRequire } = await import("node:module");
-    const require = createRequire(import.meta.url);
-    const workerPath = require.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs");
-    pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
-  }
 
   // View over the same ArrayBuffer — avoids an extra full copy before parse.
   const data = new Uint8Array(buffer);

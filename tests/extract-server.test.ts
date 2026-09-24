@@ -65,6 +65,26 @@ describe("Wave 2 — server extraction fixtures", () => {
     ).rejects.toBeTruthy();
   });
 
+  it("registers pdfjsWorker so fake-worker needs no filesystem workerSrc", async () => {
+    const g = globalThis as typeof globalThis & {
+      pdfjsWorker?: { WorkerMessageHandler?: unknown };
+    };
+    delete g.pdfjsWorker;
+
+    const bytes = readFileSync(join(fixtures, "sample-contract.pdf"));
+    const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    const extracted = await extractDocumentFromBuffer({
+      buffer: ab,
+      fileName: "sample-contract.pdf",
+      mimeType: "application/pdf",
+    });
+
+    expect(typeof g.pdfjsWorker?.WorkerMessageHandler).toBe("function");
+    expect(extracted.pageCount).toBeGreaterThanOrEqual(1);
+    const joined = extracted.pages.map((p) => p.text).join(" ");
+    expect(joined.length).toBeGreaterThan(0);
+  });
+
   it("chunkPages keeps citation-friendly sequential indices", () => {
     const chunks = chunkPages([
       { page: 1, text: "Alpha clause. ".repeat(40) },
