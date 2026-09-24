@@ -38,7 +38,7 @@ describe("SELA AI Provider Engine", () => {
     ).rejects.toThrow("SELA could not complete this legal analysis request at this time");
   });
 
-  it("uses the current Gemini response schema contract and Gemini 3.6 default", async () => {
+  it("uses the current Gemini responseFormat schema contract and Gemini 3.6 default", async () => {
     process.env.GEMINI_API_KEY = "mock_gemini_key";
     process.env.OPENROUTER_API_KEY = "mock_openrouter_key";
     process.env.AI_LLM_PRIMARY_PROVIDER = "gemini";
@@ -46,8 +46,12 @@ describe("SELA AI Provider Engine", () => {
 
     let geminiPayload: {
       generationConfig?: {
-        responseMimeType?: string;
-        responseSchema?: unknown;
+        responseFormat?: {
+          text?: {
+            mimeType?: string;
+            schema?: unknown;
+          };
+        };
         maxOutputTokens?: number;
       };
     } | null = null;
@@ -79,8 +83,10 @@ describe("SELA AI Provider Engine", () => {
     });
 
     expect(res.answer).toBe("gemini_bounded");
-    expect(geminiPayload?.generationConfig?.responseMimeType).toBe("application/json");
-    expect(geminiPayload?.generationConfig?.responseSchema).toBeDefined();
+    expect(geminiPayload?.generationConfig?.responseFormat?.text?.mimeType).toBe(
+      "application/json",
+    );
+    expect(geminiPayload?.generationConfig?.responseFormat?.text?.schema).toBeDefined();
     expect(geminiPayload?.generationConfig?.maxOutputTokens).toBe(1536);
     expect(String(fetchMock.mock.calls[0]?.[0]).includes("gemini-3.6-flash")).toBe(true);
   });

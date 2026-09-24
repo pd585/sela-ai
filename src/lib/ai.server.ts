@@ -348,9 +348,12 @@ async function callGeminiDirect<T>(args: StructuredArgs): Promise<T> {
       systemInstruction: { parts: [{ text: args.instructions }] },
       contents: [{ role: "user", parts: [{ text: args.input }] }],
       generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: cleanedSchema,
-        temperature: 0.1,
+        responseFormat: {
+          text: {
+            mimeType: "application/json",
+            schema: cleanedSchema,
+          },
+        },
         maxOutputTokens: maxTokens,
       },
     }),
