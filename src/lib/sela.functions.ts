@@ -504,6 +504,7 @@ export const processDocument = createServerFn({ method: "POST" })
           schemaName: "document_analysis",
           schema: analysisSchema,
           effort: "medium",
+          maxTokens: 8192,
         }),
       );
 

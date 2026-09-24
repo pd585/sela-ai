@@ -91,6 +91,48 @@ describe("SELA AI Provider Engine", () => {
     expect(String(fetchMock.mock.calls[0]?.[0]).includes("gemini-3.6-flash")).toBe(true);
   });
 
+  it("respects an explicit 8192-token cap for the document-analysis path", async () => {
+    process.env.GEMINI_API_KEY = "mock_gemini_key";
+    process.env.AI_LLM_PRIMARY_PROVIDER = "gemini";
+    process.env.AI_LLM_FALLBACK_PROVIDERS = "";
+
+    let geminiPayload: {
+      generationConfig?: {
+        maxOutputTokens?: number;
+      };
+    } | null = null;
+
+    const fetchMock = vi.fn().mockImplementation((url: string, opts?: { body?: string }) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        geminiPayload = JSON.parse(opts?.body || "{}");
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              candidates: [{ content: { parts: [{ text: '{"status": "ok"}' }] } }],
+            }),
+        });
+      }
+      return Promise.reject(new Error("Unknown endpoint"));
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { generateStructured } = await import("../src/lib/ai.server");
+    const result = await generateStructured<{ status: string }>({
+      instructions: "Test",
+      input: "Test",
+      schemaName: "document_analysis",
+      schema: { type: "object" },
+      effort: "medium",
+      maxTokens: 8192,
+    });
+
+    expect(result).toEqual({ status: "ok" });
+    expect(geminiPayload?.generationConfig?.maxOutputTokens).toBe(8192);
+  });
+
   it("rejects incomplete Analysis payloads before marking the document ready", async () => {
     const { validateAnalysisResult } = await import("../src/lib/ai.server");
 
