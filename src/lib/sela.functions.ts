@@ -361,7 +361,7 @@ export const processDocument = createServerFn({ method: "POST" })
     const { assertRateLimit } = await import("./rate-limit");
     assertRateLimit(userId, "process");
 
-    const { embedTexts, generateStructured } = await import("./ai.server");
+    const { embedTexts, generateStructured, validateAnalysisResult } = await import("./ai.server");
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
     const doc = await getOwnedDocument(supabase, data.documentId, userId);
@@ -497,13 +497,15 @@ export const processDocument = createServerFn({ method: "POST" })
         .update({ status_detail: "Reviewing SELA'S VERSION & structured intelligence" })
         .eq("id", data.documentId);
 
-      const analysis = await generateStructured<Analysis>({
-        instructions: ANALYSIS_INSTRUCTIONS,
-        input: `Document title: ${doc.title}\n\n${buildContext(chunks, PROCESS_CONTEXT_CHAR_BUDGET)}`,
-        schemaName: "document_analysis",
-        schema: analysisSchema,
-        effort: "medium",
-      });
+      const analysis = validateAnalysisResult(
+        await generateStructured<Analysis>({
+          instructions: ANALYSIS_INSTRUCTIONS,
+          input: `Document title: ${doc.title}\n\n${buildContext(chunks, PROCESS_CONTEXT_CHAR_BUDGET)}`,
+          schemaName: "document_analysis",
+          schema: analysisSchema,
+          effort: "medium",
+        }),
+      );
 
       // Attach sela_version inside overview / clauses payload so it persists without schema breakage
       const enrichedOverview = {

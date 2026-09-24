@@ -38,11 +38,20 @@ describe("SELA AI Provider Engine", () => {
     ).rejects.toThrow("SELA could not complete this legal analysis request at this time");
   });
 
-  it("enforces bounded token limits on OpenRouter and Gemini requests", async () => {
+  it("uses the current Gemini response schema contract and Gemini 3.6 default", async () => {
     process.env.GEMINI_API_KEY = "mock_gemini_key";
     process.env.OPENROUTER_API_KEY = "mock_openrouter_key";
+    process.env.AI_LLM_PRIMARY_PROVIDER = "gemini";
+    process.env.AI_LLM_FALLBACK_PROVIDERS = "openrouter,ollama";
 
-    let geminiPayload: { generationConfig?: { maxOutputTokens?: number } } | null = null;
+    let geminiPayload: {
+      generationConfig?: {
+        responseMimeType?: string;
+        responseSchema?: unknown;
+        maxOutputTokens?: number;
+      };
+    } | null = null;
+
     const fetchMock = vi.fn().mockImplementation((url: string, opts?: { body?: string }) => {
       if (url.includes("generativelanguage.googleapis.com")) {
         geminiPayload = JSON.parse(opts?.body || "{}");
@@ -70,7 +79,102 @@ describe("SELA AI Provider Engine", () => {
     });
 
     expect(res.answer).toBe("gemini_bounded");
+    expect(geminiPayload?.generationConfig?.responseMimeType).toBe("application/json");
+    expect(geminiPayload?.generationConfig?.responseSchema).toBeDefined();
     expect(geminiPayload?.generationConfig?.maxOutputTokens).toBe(1536);
+    expect(String(fetchMock.mock.calls[0]?.[0]).includes("gemini-3.6-flash")).toBe(true);
+  });
+
+  it("rejects incomplete Analysis payloads before marking the document ready", async () => {
+    const { validateAnalysisResult } = await import("../src/lib/ai.server");
+
+    expect(() =>
+      validateAnalysisResult({
+        overview: {},
+        key_terms: null,
+        clauses: null,
+        issues: null,
+        sela_version: { summary: "", sections: [] },
+      }),
+    ).toThrow("SELA received incomplete structured analysis.");
+
+    expect(() =>
+      validateAnalysisResult({
+        overview: {
+          document_type: "Lease",
+          purpose: "Rental",
+          summary: "Example",
+          parties: ["Landlord", "Tenant"],
+          dates: [],
+          what_matters_first: ["Payment"],
+        },
+        key_terms: [],
+        clauses: [],
+        issues: [],
+        sela_version: { summary: "Summary", sections: [] },
+      }),
+    ).not.toThrow();
+  });
+
+  it("fails explicitly when Gemini returns no usable text", async () => {
+    process.env.GEMINI_API_KEY = "mock_gemini_key";
+    process.env.AI_LLM_PRIMARY_PROVIDER = "gemini";
+    process.env.AI_LLM_FALLBACK_PROVIDERS = "";
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          candidates: [{ content: { parts: [{}] } }],
+        }),
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { generateStructured } = await import("../src/lib/ai.server");
+    await expect(
+      generateStructured({
+        instructions: "Test instructions",
+        input: "Test input",
+        schemaName: "test_schema",
+        schema: { type: "object" },
+      }),
+    ).rejects.toThrow("Gemini returned no usable completion");
+  });
+
+  it("rejects malformed OpenRouter JSON instead of silently repairing it", async () => {
+    process.env.AI_LLM_PRIMARY_PROVIDER = "openrouter";
+    process.env.AI_LLM_FALLBACK_PROVIDERS = "";
+    process.env.GEMINI_API_KEY = "invalid_gemini_key";
+    process.env.OPENROUTER_API_KEY = "mock_openrouter_key";
+
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("openrouter.ai")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              choices: [{ message: { content: '{"status": "broken"' } }],
+            }),
+        });
+      }
+      return Promise.reject(new Error("Unknown endpoint"));
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { generateStructured } = await import("../src/lib/ai.server");
+    await expect(
+      generateStructured<{ status: string }>({
+        instructions: "Test",
+        input: "Test",
+        schemaName: "test",
+        schema: { type: "object" },
+        effort: "low",
+      }),
+    ).rejects.toThrow("Malformed JSON");
   });
 
   it("falls back to OpenRouter with bounded max_tokens when Gemini fails", async () => {

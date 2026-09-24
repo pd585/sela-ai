@@ -28,6 +28,80 @@ export type ExternalVerificationResult = {
   sources: ExternalSource[];
 };
 
+export function validateAnalysisResult(value: unknown): {
+  overview: Record<string, any>;
+  key_terms: any[];
+  clauses: any[];
+  issues: any[];
+  sela_version: { summary: string; sections: any[] };
+} {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("SELA received incomplete structured analysis.");
+  }
+
+  const analysis = value as Record<string, unknown>;
+  const requiredKeys = ["overview", "key_terms", "clauses", "issues", "sela_version"];
+  for (const key of requiredKeys) {
+    if (!(key in analysis) || analysis[key] === undefined) {
+      throw new Error("SELA received incomplete structured analysis.");
+    }
+  }
+
+  const overview = analysis["overview"];
+  if (!overview || typeof overview !== "object" || Array.isArray(overview)) {
+    throw new Error("SELA received incomplete structured analysis.");
+  }
+
+  const overviewRecord = overview as Record<string, unknown>;
+  const overviewRequired = [
+    "document_type",
+    "purpose",
+    "summary",
+    "parties",
+    "dates",
+    "what_matters_first",
+  ];
+  for (const key of overviewRequired) {
+    if (!(key in overviewRecord) || overviewRecord[key] === undefined) {
+      throw new Error("SELA received incomplete structured analysis.");
+    }
+  }
+
+  if (
+    !Array.isArray(overviewRecord["parties"]) ||
+    !Array.isArray(overviewRecord["dates"]) ||
+    !Array.isArray(overviewRecord["what_matters_first"])
+  ) {
+    throw new Error("SELA received incomplete structured analysis.");
+  }
+
+  if (!Array.isArray(analysis["key_terms"]) || !Array.isArray(analysis["clauses"])) {
+    throw new Error("SELA received incomplete structured analysis.");
+  }
+
+  if (!Array.isArray(analysis["issues"])) {
+    throw new Error("SELA received incomplete structured analysis.");
+  }
+
+  const selaVersion = analysis["sela_version"];
+  if (!selaVersion || typeof selaVersion !== "object" || Array.isArray(selaVersion)) {
+    throw new Error("SELA received incomplete structured analysis.");
+  }
+
+  const selaVersionRecord = selaVersion as Record<string, unknown>;
+  if (typeof selaVersionRecord["summary"] !== "string" || !Array.isArray(selaVersionRecord["sections"])) {
+    throw new Error("SELA received incomplete structured analysis.");
+  }
+
+  return value as {
+    overview: Record<string, any>;
+    key_terms: any[];
+    clauses: any[];
+    issues: any[];
+    sela_version: { summary: string; sections: any[] };
+  };
+}
+
 function sanitizeExternalSources(value: unknown): ExternalSource[] {
   if (!Array.isArray(value)) return [];
 
@@ -261,7 +335,7 @@ async function callGeminiDirect<T>(args: StructuredArgs): Promise<T> {
   if (!geminiKey) throw new Error("GEMINI_API_KEY is not set.");
 
   const model =
-    process.env["GEMINI_LLM_MODEL"] || process.env["GEMINI_MODEL"] || "gemini-2.5-flash";
+    process.env["GEMINI_LLM_MODEL"] || process.env["GEMINI_MODEL"] || "gemini-3.6-flash";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
 
   const cleanedSchema = cleanGeminiSchema(args.schema);
@@ -292,7 +366,7 @@ async function callGeminiDirect<T>(args: StructuredArgs): Promise<T> {
   };
 
   const rawText = json.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!rawText) throw new Error("Gemini returned an empty completion.");
+  if (!rawText || !rawText.trim()) throw new Error("Gemini returned no usable completion.");
 
   return parseJsonText<T>(rawText);
 }
@@ -385,14 +459,20 @@ async function callOllama<T>(args: StructuredArgs): Promise<T> {
   return parseJsonText<T>(text);
 }
 
+function stripCodeFence(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("```")) return trimmed;
+  const withoutFence = trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "");
+  return withoutFence.trim();
+}
+
 function parseJsonText<T>(text: string): T {
+  const candidate = stripCodeFence(text);
   try {
-    return JSON.parse(text) as T;
-  } catch {
-    const start = text.indexOf("{");
-    const end = text.lastIndexOf("}");
-    if (start >= 0 && end > start) return JSON.parse(text.slice(start, end + 1)) as T;
-    throw new Error("Could not parse valid JSON from AI model response.");
+    return JSON.parse(candidate) as T;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Malformed JSON from AI provider: ${message}`);
   }
 }
 
@@ -402,13 +482,17 @@ function parseJsonText<T>(text: string): T {
 
 export async function generateStructured<T>(args: StructuredArgs): Promise<T> {
   const primary = (process.env["AI_LLM_PRIMARY_PROVIDER"] || "gemini").toLowerCase();
-  const rawFallbacks = process.env["AI_LLM_FALLBACK_PROVIDERS"] || "openrouter,ollama";
+  const rawFallbacks =
+    process.env["AI_LLM_FALLBACK_PROVIDERS"] !== undefined
+      ? process.env["AI_LLM_FALLBACK_PROVIDERS"] ?? ""
+      : "openrouter,ollama";
   const hasHostedRuntime = Boolean(process.env["VERCEL"]) || process.env["NODE_ENV"] === "production";
   const ollamaConfigured = (process.env["OLLAMA_BASE_URL"] || "").trim();
   const fallbacks = rawFallbacks
     .split(",")
     .map((s) => s.trim().toLowerCase())
     .filter((provider) => {
+      if (!provider) return false;
       if (provider !== "ollama") return true;
       if (!hasHostedRuntime) return true;
       return Boolean(ollamaConfigured) && !/localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(ollamaConfigured);
@@ -434,6 +518,11 @@ export async function generateStructured<T>(args: StructuredArgs): Promise<T> {
   }
 
   console.error(`[SELA AI Fallback Engine] All configured providers failed:\n${errors.join("\n")}`);
+  if (providerChain.length === 1) {
+    const lastError = errors[errors.length - 1] ?? "Unknown provider failure.";
+    const message = lastError.includes(": ") ? lastError.split(": ").slice(1).join(": ") : lastError;
+    throw new Error(message);
+  }
   throw new Error(
     "SELA could not complete this legal analysis request at this time. Please try again shortly.",
   );
@@ -464,7 +553,7 @@ export async function verifyExternalSources({
 
   try {
     const model =
-      process.env["GEMINI_LLM_MODEL"] || process.env["GEMINI_MODEL"] || "gemini-2.5-flash";
+      process.env["GEMINI_LLM_MODEL"] || process.env["GEMINI_MODEL"] || "gemini-3.6-flash";
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
     const prompt = `You are an authoritative legal research engine for SELA.
 Your task is to search public legal sources (statutes, case law, regulator portals, government gazettes, reputable legal publications) to address the user's question.
