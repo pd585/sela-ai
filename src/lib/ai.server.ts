@@ -339,7 +339,14 @@ async function callOpenRouter<T>(args: StructuredArgs): Promise<T> {
 }
 
 async function callOllama<T>(args: StructuredArgs): Promise<T> {
-  const baseUrl = process.env["OLLAMA_BASE_URL"] || "http://localhost:11434";
+  const hasHostedRuntime = Boolean(process.env["VERCEL"]) || process.env["NODE_ENV"] === "production";
+  const configuredBaseUrl = process.env["OLLAMA_BASE_URL"]?.trim();
+  const baseUrl = configuredBaseUrl || (hasHostedRuntime ? "" : "http://localhost:11434");
+
+  if (!baseUrl) {
+    throw new Error("Ollama is not configured for this hosted runtime.");
+  }
+
   const model = process.env["OLLAMA_LLM_MODEL"] || "llama3.2";
   const maxTokens = getBoundedMaxTokens(args);
 
@@ -396,7 +403,16 @@ function parseJsonText<T>(text: string): T {
 export async function generateStructured<T>(args: StructuredArgs): Promise<T> {
   const primary = (process.env["AI_LLM_PRIMARY_PROVIDER"] || "gemini").toLowerCase();
   const rawFallbacks = process.env["AI_LLM_FALLBACK_PROVIDERS"] || "openrouter,ollama";
-  const fallbacks = rawFallbacks.split(",").map((s) => s.trim().toLowerCase());
+  const hasHostedRuntime = Boolean(process.env["VERCEL"]) || process.env["NODE_ENV"] === "production";
+  const ollamaConfigured = (process.env["OLLAMA_BASE_URL"] || "").trim();
+  const fallbacks = rawFallbacks
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter((provider) => {
+      if (provider !== "ollama") return true;
+      if (!hasHostedRuntime) return true;
+      return Boolean(ollamaConfigured) && !/localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(ollamaConfigured);
+    });
 
   const providerChain = Array.from(new Set([primary, ...fallbacks]));
   const errors: string[] = [];

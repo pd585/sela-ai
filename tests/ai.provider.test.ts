@@ -120,6 +120,52 @@ describe("SELA AI Provider Engine", () => {
     expect(openRouterPayload?.max_tokens).toBe(1536);
   });
 
+  it("skips localhost Ollama fallback in hosted production environments", async () => {
+    process.env.VERCEL = "1";
+    process.env.AI_LLM_PRIMARY_PROVIDER = "gemini";
+    process.env.AI_LLM_FALLBACK_PROVIDERS = "openrouter,ollama";
+    process.env.GEMINI_API_KEY = "invalid_gemini_key";
+    process.env.OPENROUTER_API_KEY = "mock_openrouter_key";
+
+    const fetchMock = vi.fn().mockImplementation((url: string, opts?: { body?: string }) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve({
+          ok: false,
+          status: 401,
+          text: () => Promise.resolve("Unauthorized API key"),
+        });
+      }
+      if (url.includes("openrouter.ai")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              choices: [{ message: { content: '{"status": "ok_from_openrouter"}' } }],
+            }),
+        });
+      }
+      if (String(url).includes("localhost:11434")) {
+        return Promise.reject(new Error("Local Ollama should not be attempted in hosted production"));
+      }
+      return Promise.reject(new Error("Unknown endpoint"));
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { generateStructured } = await import("../src/lib/ai.server");
+    const result = await generateStructured<{ status: string }>({
+      instructions: "Test",
+      input: "Test",
+      schemaName: "test",
+      schema: { type: "object" },
+      effort: "low",
+    });
+
+    expect(result).toEqual({ status: "ok_from_openrouter" });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("localhost:11434"))).toBe(false);
+  });
+
   it("falls back to Ollama when OpenRouter fails with HTTP 402 insufficient credits", async () => {
     process.env.AI_LLM_PRIMARY_PROVIDER = "gemini";
     process.env.AI_LLM_FALLBACK_PROVIDERS = "openrouter,ollama";
