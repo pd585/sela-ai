@@ -10,6 +10,7 @@ describe("SELA AI Provider Engine", () => {
 
   afterEach(() => {
     process.env = originalEnv;
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -134,6 +135,133 @@ describe("SELA AI Provider Engine", () => {
 
     expect(result).toEqual({ status: "ok" });
     expect(geminiPayload?.generationConfig?.maxOutputTokens).toBe(8192);
+  });
+
+  it("retries Gemini 503 once with a one-second backoff", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    process.env.GEMINI_API_KEY = "mock_gemini_key";
+    process.env.AI_LLM_PRIMARY_PROVIDER = "gemini";
+    process.env.AI_LLM_FALLBACK_PROVIDERS = "";
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        text: () => Promise.resolve("high demand"),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ candidates: [{ content: { parts: [{ text: '{"status":"ok"}' }] } }] }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { generateStructured } = await import("../src/lib/ai.server");
+    const pending = generateStructured<{ status: string }>({
+      instructions: "Test",
+      input: "Test",
+      schemaName: "test",
+      schema: { type: "object" },
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await expect(pending).resolves.toEqual({ status: "ok" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries Gemini 503 twice before succeeding on the third attempt", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    process.env.GEMINI_API_KEY = "mock_gemini_key";
+    process.env.AI_LLM_PRIMARY_PROVIDER = "gemini";
+    process.env.AI_LLM_FALLBACK_PROVIDERS = "";
+
+    const success = {
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ candidates: [{ content: { parts: [{ text: '{"status":"ok"}' }] } }] }),
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 503, text: () => Promise.resolve("high demand") })
+      .mockResolvedValueOnce({ ok: false, status: 503, text: () => Promise.resolve("high demand") })
+      .mockResolvedValueOnce(success);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { generateStructured } = await import("../src/lib/ai.server");
+    const pending = generateStructured<{ status: string }>({
+      instructions: "Test",
+      input: "Test",
+      schemaName: "test",
+      schema: { type: "object" },
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    await expect(pending).resolves.toEqual({ status: "ok" });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("returns the final Gemini 503 and then uses the fallback provider", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    process.env.GEMINI_API_KEY = "mock_gemini_key";
+    process.env.OPENROUTER_API_KEY = "mock_openrouter_key";
+    process.env.AI_LLM_PRIMARY_PROVIDER = "gemini";
+    process.env.AI_LLM_FALLBACK_PROVIDERS = "openrouter";
+
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve({
+          ok: false,
+          status: 503,
+          text: () => Promise.resolve("high demand"),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ choices: [{ message: { content: '{"status":"fallback"}' } }] }),
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { generateStructured } = await import("../src/lib/ai.server");
+    const pending = generateStructured<{ status: string }>({
+      instructions: "Test",
+      input: "Test",
+      schemaName: "test",
+      schema: { type: "object" },
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    await expect(pending).resolves.toEqual({ status: "fallback" });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it.each([400, 404])("does not retry Gemini %s responses", async (status) => {
+    process.env.GEMINI_API_KEY = "mock_gemini_key";
+    process.env.AI_LLM_PRIMARY_PROVIDER = "gemini";
+    process.env.AI_LLM_FALLBACK_PROVIDERS = "";
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status,
+      text: () => Promise.resolve("client error"),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { generateStructured } = await import("../src/lib/ai.server");
+    await expect(
+      generateStructured({
+        instructions: "Test",
+        input: "Test",
+        schemaName: "test",
+        schema: { type: "object" },
+      }),
+    ).rejects.toThrow(`Gemini Direct API error [${status}]`);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("rejects incomplete Analysis payloads before marking the document ready", async () => {
@@ -367,7 +495,7 @@ describe("SELA AI Provider Engine", () => {
     });
 
     expect(result).toEqual({ status: "ok_from_ollama_fallback" });
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it("enforces 3072-dimensional vector format for Gemini embeddings", async () => {

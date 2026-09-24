@@ -341,37 +341,47 @@ async function callGeminiDirect<T>(args: StructuredArgs): Promise<T> {
   const cleanedSchema = cleanGeminiSchema(args.schema);
   const maxTokens = getBoundedMaxTokens(args);
 
-  const res = await fetchWithTimeout(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: args.instructions }] },
-      contents: [{ role: "user", parts: [{ text: args.input }] }],
-      generationConfig: {
-        responseFormat: {
-          text: {
-            mimeType: "APPLICATION_JSON",
-            schema: cleanedSchema,
+  const transientStatuses = new Set([408, 429, 500, 502, 503, 504]);
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const res = await fetchWithTimeout(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: args.instructions }] },
+        contents: [{ role: "user", parts: [{ text: args.input }] }],
+        generationConfig: {
+          responseFormat: {
+            text: {
+              mimeType: "APPLICATION_JSON",
+              schema: cleanedSchema,
+            },
           },
+          maxOutputTokens: maxTokens,
         },
-        maxOutputTokens: maxTokens,
-      },
-    }),
-  });
+      }),
+    });
 
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Gemini Direct API error [${res.status}]: ${errText}`);
+    if (!res.ok) {
+      const errText = await res.text();
+      if (transientStatuses.has(res.status) && attempt < 3) {
+        const delayMs = 1000 * 2 ** (attempt - 1) + Math.random() * 250;
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+      throw new Error(`Gemini Direct API error [${res.status}]: ${errText}`);
+    }
+
+    const json = (await res.json()) as {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    };
+
+    const rawText = json.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!rawText || !rawText.trim()) throw new Error("Gemini returned no usable completion.");
+
+    return parseJsonText<T>(rawText);
   }
 
-  const json = (await res.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
-
-  const rawText = json.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!rawText || !rawText.trim()) throw new Error("Gemini returned no usable completion.");
-
-  return parseJsonText<T>(rawText);
+  throw new Error("Gemini Direct API request failed after retries.");
 }
 
 async function callOpenRouter<T>(args: StructuredArgs): Promise<T> {
