@@ -350,7 +350,7 @@ async function callGeminiDirect<T>(args: StructuredArgs): Promise<T> {
       generationConfig: {
         responseFormat: {
           text: {
-            mimeType: "application/json",
+            mimeType: "APPLICATION_JSON",
             schema: cleanedSchema,
           },
         },

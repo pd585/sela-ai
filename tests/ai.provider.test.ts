@@ -84,6 +84,9 @@ describe("SELA AI Provider Engine", () => {
 
     expect(res.answer).toBe("gemini_bounded");
     expect(geminiPayload?.generationConfig?.responseFormat?.text?.mimeType).toBe(
+      "APPLICATION_JSON",
+    );
+    expect(geminiPayload?.generationConfig?.responseFormat?.text?.mimeType).not.toBe(
       "application/json",
     );
     expect(geminiPayload?.generationConfig?.responseFormat?.text?.schema).toBeDefined();
