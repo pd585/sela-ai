@@ -20,6 +20,7 @@ import {
   translateSelaVersion,
   type Citation,
   type ClauseFinding,
+  normalizeDocumentOverview,
   type DocumentOverview,
   type IssueFinding,
   type KeyTerm,
@@ -263,7 +264,9 @@ export function DocumentReview() {
 
   const chunkMap = useMemo(() => new Map(chunks.map((c) => [c.chunk_index, c])), [chunks]);
 
-  const overview = (doc?.overview ?? null) as DocumentOverview | null;
+  // Soft-schema analysis may omit required arrays; normalize so TabsContent children
+  // (evaluated even when Overview is inactive) never touch undefined.length.
+  const overview = normalizeDocumentOverview(doc?.overview ?? null);
 
   const selaVersion: SelaVersion = useMemo(() => {
     if (!doc) return { summary: "", sections: [] };

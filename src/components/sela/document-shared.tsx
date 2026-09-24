@@ -18,7 +18,7 @@ export function VisualDiagramCard({ visual }: { visual: VisualIntelligence }) {
       </div>
 
       <div className="mt-2 space-y-2">
-        {visual.items.map((item, idx) => (
+        {(visual.items ?? []).map((item, idx) => (
           <div key={idx} className="flex items-start gap-2.5 text-xs">
             <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-brass/20 text-[0.65rem] font-bold text-brass">
               {item.step ?? idx + 1}

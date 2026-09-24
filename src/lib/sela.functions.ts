@@ -26,6 +26,36 @@ export type DocumentOverview = {
   what_matters_first: string[];
 };
 
+/** Coerce soft-schema / truncated analysis JSON into a safe overview for the review UI.
+ * Preserves extra persisted fields (e.g. sela_version, translations) while defaulting arrays.
+ */
+export function normalizeDocumentOverview(raw: unknown): DocumentOverview | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Partial<DocumentOverview> & Record<string, unknown>;
+  return {
+    ...o,
+    document_type: typeof o.document_type === "string" ? o.document_type : "",
+    purpose: typeof o.purpose === "string" ? o.purpose : "",
+    summary: typeof o.summary === "string" ? o.summary : "",
+    parties: Array.isArray(o.parties)
+      ? o.parties.filter((p): p is string => typeof p === "string")
+      : [],
+    dates: Array.isArray(o.dates)
+      ? o.dates.filter(
+          (d): d is DocumentOverview["dates"][number] =>
+            !!d &&
+            typeof d === "object" &&
+            typeof (d as { label?: unknown }).label === "string" &&
+            typeof (d as { detail?: unknown }).detail === "string" &&
+            typeof (d as { chunk_index?: unknown }).chunk_index === "number",
+        )
+      : [],
+    what_matters_first: Array.isArray(o.what_matters_first)
+      ? o.what_matters_first.filter((s): s is string => typeof s === "string")
+      : [],
+  };
+}
+
 export type KeyTerm = { term: string; meaning_in_document: string; chunk_index: number };
 
 export type ClauseFinding = {
